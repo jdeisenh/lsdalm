@@ -1,0 +1,4 @@
+github.com/unki2aut/go-mpd v0.0.0-20231111094442-da7fdac88cfc h1:3q28tMkqMinyMUBwYA4Ofp7BYCi1fIZIyMoCdCKbf2M=
+github.com/unki2aut/go-mpd v0.0.0-20231111094442-da7fdac88cfc/go.mod h1:LITqXLCxxmcoHtOMgZh5NbcfS4RCrrADQXPVkYwF/cc=
+github.com/unki2aut/go-xsd-types v0.0.0-20200220223938-30e5405398f8 h1:u0Bi6Mf8BKPQnxGJ7QubdMyhb0SJjnQU7kX0BA9eASk=
+github.com/unki2aut/go-xsd-types v0.0.0-20200220223938-30e5405398f8/go.mod h1:uIeMfpmWIZ8SGp+fTfwDBWiiRn3aJm4b7rFSro9s++Q=
