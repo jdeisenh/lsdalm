@@ -15,8 +15,12 @@ import (
 	"github.com/unki2aut/go-mpd"
 )
 
+const doStore = false
+
 func fetch(fetchme *url.URL) error {
-	return nil
+	if !doStore {
+		return nil
+	}
 	localpath := path.Join(".", fetchme.Path)
 	os.MkdirAll(path.Dir(localpath), 0777)
 	_, err := os.Stat(localpath)
@@ -44,44 +48,65 @@ func fetch(fetchme *url.URL) error {
 	return nil
 }
 
-func walkSegmentTimeline(stl *mpd.SegmentTimeline, periodUrl *url.URL, repId, media string, timescale uint64, periodIdx, presIdx int) {
-	var lasttime, firsttime uint64
-	for _, s := range stl.S {
-		var repeat int64
-		if s.T != nil {
-			if firsttime == 0 {
-				firsttime = *s.T
-			}
-			lasttime = *s.T
-		}
+func walkSegmentTemplate(st *mpd.SegmentTemplate, periodUrl *url.URL, repId string, periodIdx, presIdx int, fetch func(*url.URL) error) {
 
-		if s.R != nil {
-			repeat = *s.R
-		}
-
-		for r := int64(0); r <= repeat; r++ {
-			//fmt.Printf("Time %d\n", time)
-			fullUrl := periodUrl.JoinPath(fmt.Sprintf(media, lasttime, repId))
-			fetch(fullUrl)
-			lasttime += s.D
-		}
+	//fmt.Printf("SegmentTemplate: %+v\n", st)
+	timescale := uint64(1)
+	if st.Timescale != nil {
+		timescale = *st.Timescale
 	}
-	if presIdx == 0 {
-		// Only on first representation
-		ft := float64(lasttime) / float64(timescale)
-		to := time.Unix(int64(ft), int64(math.Round((ft-math.Trunc(ft))*100)*1e7))
-		ft = float64(firsttime) / float64(timescale)
-		from := time.Unix(int64(ft), int64(math.Round((ft-math.Trunc(ft))*100)*1e7))
-		//fmt.Printf("Mimetype: %d: %s\n", periodIdx, as.MimeType)
-		fmt.Printf("Duration: %d: %s %s\n",
-			periodIdx,
-			to.Sub(from)/time.Millisecond*time.Millisecond,
-			time.Now().Sub(to)/time.Millisecond*time.Millisecond)
-		//First time: %s\n", time.Unix(int64(ft), int64(math.Round((ft-math.Trunc(ft))*100)*1e7)))
+	//fmt.Printf("Timescale: %+v\n", timescale)
+	//fmt.Printf("Media: %+v\n", *st.Media)
+	media := *st.Media
+	// Replace with go format parameters
+	media = strings.Replace(media, "$Time$", "%[1]d", 1)
+	media = strings.Replace(media, "$RepresentationID$", "%[2]s", 1)
+	//fmt.Printf("Media: %s\n", media)
+	if st.Initialization != nil {
+		init := strings.Replace(*st.Initialization, "$RepresentationID$", repId, 1)
+		//fmt.Printf("Init: %s\n", init)
+		fetch(periodUrl.JoinPath(init))
+	}
+	if st.SegmentTimeline != nil {
+		stl := st.SegmentTimeline
+		var lasttime, firsttime uint64
+		for _, s := range stl.S {
+			var repeat int64
+			if s.T != nil {
+				if firsttime == 0 {
+					firsttime = *s.T
+				}
+				lasttime = *s.T
+			}
+
+			if s.R != nil {
+				repeat = *s.R
+			}
+
+			for r := int64(0); r <= repeat; r++ {
+				//fmt.Printf("Time %d\n", time)
+				fullUrl := periodUrl.JoinPath(fmt.Sprintf(media, lasttime, repId))
+				fetch(fullUrl)
+				lasttime += s.D
+			}
+		}
+		if presIdx == 0 {
+			// Only on first representation
+			ft := float64(lasttime) / float64(timescale)
+			to := time.Unix(int64(ft), int64(math.Round((ft-math.Trunc(ft))*100)*1e7))
+			ft = float64(firsttime) / float64(timescale)
+			from := time.Unix(int64(ft), int64(math.Round((ft-math.Trunc(ft))*100)*1e7))
+			//fmt.Printf("Mimetype: %d: %s\n", periodIdx, as.MimeType)
+			fmt.Printf("Duration: %d: %s %s\n",
+				periodIdx,
+				to.Sub(from)/time.Millisecond*time.Millisecond,
+				time.Now().Sub(to)/time.Millisecond*time.Millisecond)
+			//First time: %s\n", time.Unix(int64(ft), int64(math.Round((ft-math.Trunc(ft))*100)*1e7)))
+		}
 	}
 }
 
-func fetchAndStore(from string) error {
+func fetchAndStore(from string, fetch func(*url.URL) error) error {
 	mpd := new(mpd.MPD)
 
 	mpdUrl, err := url.Parse(from)
@@ -97,10 +122,12 @@ func fetchAndStore(from string) error {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	filename := "manifest-" + time.Now().Format(time.TimeOnly) + ".mpd"
-	err = os.WriteFile(filename, contents, 0644)
-	if err != nil {
-		log.Println(err)
+	if doStore {
+		filename := "manifest-" + time.Now().Format(time.TimeOnly) + ".mpd"
+		err = os.WriteFile(filename, contents, 0644)
+		if err != nil {
+			log.Println(err)
+		}
 	}
 	err = mpd.Decode(contents)
 	if err != nil {
@@ -130,29 +157,10 @@ func fetchAndStore(from string) error {
 				if pres.ID != nil {
 					repId := *pres.ID
 					//fmt.Printf("Representation: %+v", pres.ID)
-					if as.SegmentTemplate == nil {
-						continue
-					}
-					st := as.SegmentTemplate
-					//fmt.Printf("SegmentTemplate: %+v\n", st)
-					timescale := uint64(1)
-					if st.Timescale != nil {
-						timescale = *st.Timescale
-					}
-					//fmt.Printf("Timescale: %+v\n", timescale)
-					//fmt.Printf("Media: %+v\n", *st.Media)
-					media := *st.Media
-					// Replace with go format parameters
-					media = strings.Replace(media, "$Time$", "%[1]d", 1)
-					media = strings.Replace(media, "$RepresentationID$", "%[2]s", 1)
-					//fmt.Printf("Media: %s\n", media)
-					if st.Initialization != nil {
-						init := strings.Replace(*st.Initialization, "$RepresentationID$", repId, 1)
-						//fmt.Printf("Init: %s\n", init)
-						fetch(periodUrl.JoinPath(init))
-					}
-					if st.SegmentTimeline != nil {
-						walkSegmentTimeline(st.SegmentTimeline, periodUrl, repId, media, timescale, periodIdx, presIdx)
+					if as.SegmentTemplate != nil {
+						walkSegmentTemplate(as.SegmentTemplate, periodUrl, repId, periodIdx, presIdx, fetch)
+					} else if pres.SegmentTemplate != nil {
+						walkSegmentTemplate(pres.SegmentTemplate, periodUrl, repId, periodIdx, presIdx, fetch)
 					}
 				}
 			}
@@ -173,6 +181,6 @@ func main() {
 	for {
 		_ = <-ticker.C
 		log.Println("Tick")
-		fetchAndStore(firstArg) //"https://svc45.cdn-t0.tv.telekom.net/bpk-tv/vox_hd/DASH/manifest.mpd")
+		fetchAndStore(firstArg, fetch) //"https://svc45.cdn-t0.tv.telekom.net/bpk-tv/vox_hd/DASH/manifest.mpd")
 	}
 }
