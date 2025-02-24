@@ -17,11 +17,14 @@ import (
 
 const doStore = true
 
-func fetch(fetchme *url.URL) error {
+const outPath = "dump/"
+const outManifestPath = outPath + "manifests/"
+
+func fetchAndStoreUrl(fetchme *url.URL) error {
 	if !doStore {
 		return nil
 	}
-	localpath := path.Join(".", fetchme.Path)
+	localpath := path.Join(outPath, fetchme.Path)
 	os.MkdirAll(path.Dir(localpath), 0777)
 	_, err := os.Stat(localpath)
 	if err == nil {
@@ -39,7 +42,7 @@ func fetch(fetchme *url.URL) error {
 		if err != nil {
 			log.Println(err)
 		}
-		log.Printf("Got: %s %s", fetchme.String(), localpath)
+		log.Printf("Got: %s", fetchme.String())
 		err = os.WriteFile(localpath, body, 0644)
 		if err != nil {
 			log.Println(err)
@@ -68,48 +71,51 @@ func walkSegmentTemplate(st *mpd.SegmentTemplate, periodUrl *url.URL, repId stri
 		//fmt.Printf("Init: %s\n", init)
 		fetch(periodUrl.JoinPath(init))
 	}
-	if st.SegmentTimeline != nil {
-		stl := st.SegmentTimeline
-		var lasttime, firsttime uint64
-		number := 0
-		if st.StartNumber != nil {
-			number = int(*st.StartNumber)
-		}
-		for _, s := range stl.S {
-			var repeat int64
-			if s.T != nil {
-				if firsttime == 0 {
-					firsttime = *s.T
-				}
-				lasttime = *s.T
+	// Walk the Segment
+	if st.SegmentTimeline == nil {
+		fmt.Println("SegmentTemplate without Timeline not suported")
+		return
+	}
+	stl := st.SegmentTimeline
+	var lasttime, firsttime uint64
+	number := 0
+	if st.StartNumber != nil {
+		number = int(*st.StartNumber)
+	}
+	for _, s := range stl.S {
+		var repeat int64
+		if s.T != nil {
+			if firsttime == 0 {
+				firsttime = *s.T
 			}
+			lasttime = *s.T
+		}
 
-			if s.R != nil {
-				repeat = *s.R
-			}
+		if s.R != nil {
+			repeat = *s.R
+		}
 
-			for r := int64(0); r <= repeat; r++ {
-				ppa := fmt.Sprintf(media, lasttime, repId, number)
-				//fmt.Printf("Path %s:%s\n", media, ppa)
-				fullUrl := periodUrl.JoinPath(ppa)
-				fetch(fullUrl)
-				lasttime += s.D
-				number++
-			}
+		for r := int64(0); r <= repeat; r++ {
+			ppa := fmt.Sprintf(media, lasttime, repId, number)
+			//fmt.Printf("Path %s:%s\n", media, ppa)
+			fullUrl := periodUrl.JoinPath(ppa)
+			fetch(fullUrl)
+			lasttime += s.D
+			number++
 		}
-		if presIdx == 0 {
-			// Only on first representation
-			ft := float64(lasttime) / float64(timescale)
-			to := time.Unix(int64(ft), int64(math.Round((ft-math.Trunc(ft))*100)*1e7))
-			ft = float64(firsttime) / float64(timescale)
-			from := time.Unix(int64(ft), int64(math.Round((ft-math.Trunc(ft))*100)*1e7))
-			//fmt.Printf("Mimetype: %d: %s\n", periodIdx, as.MimeType)
-			fmt.Printf("Duration: %d: %s %s\n",
-				periodIdx,
-				to.Sub(from)/time.Millisecond*time.Millisecond,
-				time.Now().Sub(to)/time.Millisecond*time.Millisecond)
-			//First time: %s\n", time.Unix(int64(ft), int64(math.Round((ft-math.Trunc(ft))*100)*1e7)))
-		}
+	}
+	if presIdx == 0 {
+		// Only on first representation
+		ft := float64(lasttime) / float64(timescale)
+		to := time.Unix(int64(ft), int64(math.Round((ft-math.Trunc(ft))*100)*1e7))
+		ft = float64(firsttime) / float64(timescale)
+		from := time.Unix(int64(ft), int64(math.Round((ft-math.Trunc(ft))*100)*1e7))
+		//fmt.Printf("Mimetype: %d: %s\n", periodIdx, as.MimeType)
+		fmt.Printf("Duration: %d: %s %s\n",
+			periodIdx,
+			to.Sub(from)/time.Millisecond*time.Millisecond,
+			time.Now().Sub(to)/time.Millisecond*time.Millisecond)
+		//First time: %s\n", time.Unix(int64(ft), int64(math.Round((ft-math.Trunc(ft))*100)*1e7)))
 	}
 }
 
@@ -130,7 +136,7 @@ func fetchAndStore(from string, fetch func(*url.URL) error) error {
 		log.Fatalln(err)
 	}
 	if doStore {
-		filename := "manifest-" + time.Now().Format(time.TimeOnly) + ".mpd"
+		filename := outManifestPath + "manifest-" + time.Now().Format(time.TimeOnly) + ".mpd"
 		err = os.WriteFile(filename, contents, 0644)
 		if err != nil {
 			log.Println(err)
@@ -185,9 +191,13 @@ func main() {
 	}
 	firstArg := os.Args[1]
 	ticker := time.NewTicker(1920 * time.Millisecond)
+	if err := os.MkdirAll(outManifestPath, 0777); err != nil {
+		log.Fatal("Cannot create directory")
+	}
+
 	for {
 		_ = <-ticker.C
 		log.Println("Tick")
-		fetchAndStore(firstArg, fetch) //"https://svc45.cdn-t0.tv.telekom.net/bpk-tv/vox_hd/DASH/manifest.mpd")
+		fetchAndStore(firstArg, fetchAndStoreUrl) //"https://svc45.cdn-t0.tv.telekom.net/bpk-tv/vox_hd/DASH/manifest.mpd")
 	}
 }
