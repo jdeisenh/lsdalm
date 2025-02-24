@@ -15,7 +15,7 @@ import (
 	"github.com/unki2aut/go-mpd"
 )
 
-const doStore = false
+const doStore = true
 
 func fetch(fetchme *url.URL) error {
 	if !doStore {
@@ -61,6 +61,7 @@ func walkSegmentTemplate(st *mpd.SegmentTemplate, periodUrl *url.URL, repId stri
 	// Replace with go format parameters
 	media = strings.Replace(media, "$Time$", "%[1]d", 1)
 	media = strings.Replace(media, "$RepresentationID$", "%[2]s", 1)
+	media = strings.Replace(media, "$Number$", "%[3]d", 1)
 	//fmt.Printf("Media: %s\n", media)
 	if st.Initialization != nil {
 		init := strings.Replace(*st.Initialization, "$RepresentationID$", repId, 1)
@@ -70,6 +71,10 @@ func walkSegmentTemplate(st *mpd.SegmentTemplate, periodUrl *url.URL, repId stri
 	if st.SegmentTimeline != nil {
 		stl := st.SegmentTimeline
 		var lasttime, firsttime uint64
+		number := 0
+		if st.StartNumber != nil {
+			number = int(*st.StartNumber)
+		}
 		for _, s := range stl.S {
 			var repeat int64
 			if s.T != nil {
@@ -84,10 +89,12 @@ func walkSegmentTemplate(st *mpd.SegmentTemplate, periodUrl *url.URL, repId stri
 			}
 
 			for r := int64(0); r <= repeat; r++ {
-				//fmt.Printf("Time %d\n", time)
-				fullUrl := periodUrl.JoinPath(fmt.Sprintf(media, lasttime, repId))
+				ppa := fmt.Sprintf(media, lasttime, repId, number)
+				//fmt.Printf("Path %s:%s\n", media, ppa)
+				fullUrl := periodUrl.JoinPath(ppa)
 				fetch(fullUrl)
 				lasttime += s.D
+				number++
 			}
 		}
 		if presIdx == 0 {
