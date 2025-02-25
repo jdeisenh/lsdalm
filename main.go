@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	//"gitlab.com/nowtilus/eventinjector/pkg/go-mpd"
 	"github.com/unki2aut/go-mpd"
 )
 
@@ -146,17 +147,20 @@ func (r *PathReplacer) ToPath(time, number int, representationId string) string 
 	return fmt.Sprintf(r.fmt, time, number, representationId)
 }
 
-// TLP2Time Converts timestamp withtimescale to Time
-func TLP2Time(pts uint64, timescale uint64) time.Time {
+// TLP2Duration Converts timestamp withtimescale to Duration
+func TLP2Duration(pts uint64, timescale uint64) time.Duration {
 	secs := pts / timescale
-	usecs := (pts * timescale) % 1000000000
-	return time.Unix(int64(secs), int64(usecs))
+	nsecs := (pts * timescale) % 1000000000
+	return time.Duration(secs)*time.Second + time.Duration(nsecs)*time.Nanosecond
 }
 
 // Round duration to 100s of seconds
+func RoundTo(in time.Duration, to time.Duration) time.Duration {
+	return in / to * to
+}
+
 func Round(in time.Duration) time.Duration {
-	unit := time.Millisecond * 10
-	return in / unit * unit
+	return RoundTo(in, time.Millisecond*10)
 }
 
 func walkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId string, fetch func(*url.URL) error) {
@@ -190,8 +194,15 @@ func walkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId st
 }
 
 // Return daterange of SegmentTemplate
-func sumSegmentTemplate(st *mpd.SegmentTemplate) (from, to time.Time) {
+func sumSegmentTemplate(st *mpd.SegmentTemplate, periodStart time.Time) (from, to time.Time) {
 
+	if st == nil {
+		return
+	}
+	var pto uint64
+	if st.PresentationTimeOffset != nil {
+		pto = *st.PresentationTimeOffset
+	}
 	stl := st.SegmentTimeline
 	//fmt.Printf("SegmentTemplate: %+v\n", st)
 	timescale := uint64(1)
@@ -199,8 +210,8 @@ func sumSegmentTemplate(st *mpd.SegmentTemplate) (from, to time.Time) {
 		timescale = *st.Timescale
 	}
 	ft, lt := GetTimeRange(stl)
-	from = TLP2Time(ft, timescale)
-	to = TLP2Time(lt, timescale)
+	from = periodStart.Add(TLP2Duration(ft-pto, timescale))
+	to = periodStart.Add(TLP2Duration(lt-pto, timescale))
 	return
 }
 
@@ -258,7 +269,7 @@ func fetchAndStore(from string, fetch func(*url.URL) error) error {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	err = walkTimeLine(mpd)
+	err = walkMpd(mpd)
 	if doStore {
 		err = onAllSegmentUrls(mpd, mpdUrl, fetch)
 	}
@@ -292,13 +303,18 @@ const dateShortFmt = "15:04:05.00"
 
 // Iterate through all periods, representation, segmentTimeline and
 // call back with the URL
-func walkTimeLine(mpd *mpd.MPD) error {
+func walkMpd(mpd *mpd.MPD) error {
 
 	now := time.Now()
 
 	if len(mpd.Period) == 0 {
 		return errors.New("No periods")
 	}
+	var ast time.Time
+	if mpd.AvailabilityStartTime != nil {
+		ast = time.Time(*mpd.AvailabilityStartTime)
+	}
+	//fmt.Println(ast)
 	// TODO: Choose best period for adaptationSet Refernce
 	referencePeriod := mpd.Period[0]
 	// Choose one with Period-AdaptationSet->SegmentTemplate, which in our case is
@@ -307,12 +323,14 @@ func walkTimeLine(mpd *mpd.MPD) error {
 		if len(period.AdaptationSets) == 0 {
 			continue
 		}
+
 		if period.AdaptationSets[0].SegmentTemplate != nil {
 			referencePeriod = period
 			break
 		}
 	}
 	// Walk all Periods, AdaptationSets and Representations
+	var theGap time.Time
 	for _, as := range referencePeriod.AdaptationSets {
 		for periodIdx, period := range mpd.Period {
 			// Find the adaptationset matching the reference adaptationset
@@ -327,25 +345,35 @@ func walkTimeLine(mpd *mpd.MPD) error {
 				}
 			}
 
-			var from, to time.Time
-			if asr.SegmentTemplate != nil {
-				from, to = sumSegmentTemplate(asr.SegmentTemplate)
-			} else {
-				for _, pres := range as.Representations {
+			// Calculate period start
+			var start time.Duration
+			if period.Start != nil {
+				startmed, _ := (*period.Start).ToNanoseconds()
+				start = time.Duration(startmed)
+			}
+			periodStart := ast.Add(start)
+			from, to := sumSegmentTemplate(asr.SegmentTemplate, periodStart)
+			if from.IsZero() {
+				for _, pres := range asr.Representations {
 					if pres.SegmentTemplate != nil {
-						from, to = sumSegmentTemplate(pres.SegmentTemplate)
+						from, to = sumSegmentTemplate(pres.SegmentTemplate, periodStart)
+						break
 					}
 				}
 			}
 			if periodIdx == 0 {
-				fmt.Printf("%10s: %8s", as.MimeType, Round(now.Sub(from)))
+				// Line start: mimetype, timeshiftBufferDepth
+				fmt.Printf("%10s: %8s", as.MimeType, RoundTo(now.Sub(from), time.Second))
+			} else if gap := from.Sub(theGap); gap > time.Millisecond || gap < -time.Millisecond {
+				fmt.Printf("GAP: %s", Round(gap))
 			}
 
 			fmt.Printf(" [%s-%s[", from.Format(dateShortFmt), to.Format(dateShortFmt))
 
 			if periodIdx == len(mpd.Period)-1 {
-				fmt.Printf(" %s\n", Round(now.Sub(to))) // Live edge distance
+				fmt.Printf(" %s\n", RoundTo(now.Sub(to), time.Second)) // Live edge distance
 			}
+			theGap = to
 		}
 	}
 	return nil
