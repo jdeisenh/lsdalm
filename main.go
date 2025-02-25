@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
-	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,7 +15,7 @@ import (
 	"github.com/unki2aut/go-mpd"
 )
 
-const doStore = true
+const doStore = false
 
 const outPath = "dump/"
 const outManifestPath = outPath + "manifests/"
@@ -84,6 +83,25 @@ func executeFetchAndStore(fetchme *url.URL) error {
 	return nil
 }
 
+// Get first and last
+func GetTimeRange(stl *mpd.SegmentTimeline) (from, to uint64) {
+	for _, s := range stl.S {
+		var repeat int64
+		if s.T != nil {
+			to = *s.T
+			if from == 0 {
+				from = to
+			}
+		}
+
+		if s.R != nil {
+			repeat = *s.R
+		}
+		to += s.D * uint64(repeat+1)
+	}
+	return
+}
+
 // Iterator walking a SegmentTimeline S chain, returning time and duration in each step
 func All(stl *mpd.SegmentTimeline) func(func(t, d uint64) bool) {
 	return func(yield func(t, d uint64) bool) {
@@ -110,6 +128,37 @@ func All(stl *mpd.SegmentTimeline) func(func(t, d uint64) bool) {
 
 }
 
+type PathReplacer struct {
+	fmt string
+}
+
+func NewPathReplacer(template string) *PathReplacer {
+
+	fmt := template
+	// Replace with go format parameters
+	fmt = strings.Replace(fmt, "$Time$", "%[1]d", 1)
+	fmt = strings.Replace(fmt, "$Number$", "%[2]d", 1)
+	fmt = strings.Replace(fmt, "$RepresentationID$", "%[3]s", 1)
+	return &PathReplacer{fmt}
+}
+
+func (r *PathReplacer) ToPath(time, number int, representationId string) string {
+	return fmt.Sprintf(r.fmt, time, number, representationId)
+}
+
+// TLP2Time Converts timestamp withtimescale to Time
+func TLP2Time(pts uint64, timescale uint64) time.Time {
+	secs := pts / timescale
+	usecs := (pts * timescale) % 1000000000
+	return time.Unix(int64(secs), int64(usecs))
+}
+
+// Round duration to 100s of seconds
+func Round(in time.Duration) time.Duration {
+	unit := time.Millisecond * 10
+	return in / unit * unit
+}
+
 func walkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId string, periodIdx, presIdx int, fetch func(*url.URL) error) {
 
 	//fmt.Printf("SegmentTemplate: %+v\n", st)
@@ -119,12 +168,7 @@ func walkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId st
 	}
 	//fmt.Printf("Timescale: %+v\n", timescale)
 	//fmt.Printf("Media: %+v\n", *st.Media)
-	media := *st.Media
-	// Replace with go format parameters
-	media = strings.Replace(media, "$Time$", "%[1]d", 1)
-	media = strings.Replace(media, "$RepresentationID$", "%[2]s", 1)
-	media = strings.Replace(media, "$Number$", "%[3]d", 1)
-	//fmt.Printf("Media: %s\n", media)
+	pathTemplate := NewPathReplacer(*st.Media)
 	if st.Initialization != nil {
 		init := strings.Replace(*st.Initialization, "$RepresentationID$", repId, 1)
 		//fmt.Printf("Init: %s\n", init)
@@ -136,32 +180,35 @@ func walkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId st
 		return
 	}
 	stl := st.SegmentTimeline
-	var lasttime, firsttime uint64
 	number := 0
 	if st.StartNumber != nil {
 		number = int(*st.StartNumber)
 	}
 
 	for t := range All(stl) {
-		ppa := fmt.Sprintf(media, t, repId, number)
+		ppa := pathTemplate.ToPath(int(t), number, repId)
 		//fmt.Printf("Path %s:%s\n", media, ppa)
 		fullUrl := segmentPath.JoinPath(ppa)
 		fetch(fullUrl)
 		number++
 	}
-	if presIdx == 0 {
-		// Only on first representation
-		ft := float64(lasttime) / float64(timescale)
-		to := time.Unix(int64(ft), int64(math.Round((ft-math.Trunc(ft))*100)*1e7))
-		ft = float64(firsttime) / float64(timescale)
-		from := time.Unix(int64(ft), int64(math.Round((ft-math.Trunc(ft))*100)*1e7))
-		//fmt.Printf("Mimetype: %d: %s\n", periodIdx, as.MimeType)
+	// Only on first representation
+	if presIdx != 0 {
+		return
+	}
+	ft, lt := GetTimeRange(stl)
+	from := TLP2Time(ft, timescale)
+	to := TLP2Time(lt, timescale)
+	//fmt.Printf("Mimetype: %d: %s\n", periodIdx, as.MimeType)
+	const dateShortFmt = "15:04:05.99"
+	/*
 		fmt.Printf("Duration: %d: %s %s\n",
 			periodIdx,
-			to.Sub(from)/time.Millisecond*time.Millisecond,
-			time.Now().Sub(to)/time.Millisecond*time.Millisecond)
-		//First time: %s\n", time.Unix(int64(ft), int64(math.Round((ft-math.Trunc(ft))*100)*1e7)))
-	}
+			Round(to.Sub(from)),
+			Round(time.Now().Sub(to))
+	*/
+	fmt.Printf("%d: %s [%s-%s[ %s\n", periodIdx, Round(to.Sub(from)), from.Format(dateShortFmt), to.Format(dateShortFmt), Round(time.Now().Sub(to)))
+	//First time: %s\n", time.Unix(int64(ft), int64(math.Round((ft-math.Trunc(ft))*100)*1e7)))
 }
 
 func segmentPathFromPeriod(period *mpd.Period, mpdUrl *url.URL) *url.URL {
@@ -207,6 +254,7 @@ func fetchAndStore(from string, fetch func(*url.URL) error) error {
 		log.Fatalln(err)
 	}
 	if doStore {
+		// Store the manifest
 		filename := outManifestPath + "manifest-" + time.Now().Format(time.TimeOnly) + ".mpd"
 		err = os.WriteFile(filename, contents, 0644)
 		if err != nil {
@@ -217,23 +265,22 @@ func fetchAndStore(from string, fetch func(*url.URL) error) error {
 	if err != nil {
 		log.Fatalln(err)
 	}
+	// Walk all Periods, AdaptationSets and Representations
 	for periodIdx, period := range mpd.Period {
 		segmentPath := segmentPathFromPeriod(period, mpdUrl)
 		for _, as := range period.AdaptationSets {
-			//fmt.Printf(": %+v\n", as)
 			for presIdx, pres := range as.Representations {
-				if pres.ID != nil {
-					repId := *pres.ID
-					//fmt.Printf("Representation: %+v", pres.ID)
-					if as.SegmentTemplate != nil {
-						walkSegmentTemplate(as.SegmentTemplate, segmentPath, repId, periodIdx, presIdx, fetch)
-					} else if pres.SegmentTemplate != nil {
-						walkSegmentTemplate(pres.SegmentTemplate, segmentPath, repId, periodIdx, presIdx, fetch)
-					}
+				if pres.ID == nil {
+					continue
+				}
+				repId := *pres.ID
+				if as.SegmentTemplate != nil {
+					walkSegmentTemplate(as.SegmentTemplate, segmentPath, repId, periodIdx, presIdx, fetch)
+				} else if pres.SegmentTemplate != nil {
+					walkSegmentTemplate(pres.SegmentTemplate, segmentPath, repId, periodIdx, presIdx, fetch)
 				}
 			}
 		}
-		//}
 	}
 	return nil
 }
