@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -20,10 +21,36 @@ const doStore = true
 const outPath = "dump/"
 const outManifestPath = outPath + "manifests/"
 
-func fetchAndStoreUrl(fetchme *url.URL) error {
+const backbuffer = 1000 // Max number of outstanding requests
+
+var fetchme chan *url.URL
+
+// Goroutine
+func fetcher() {
+
+	for i := range fetchme {
+		executeFetchAndStore(i)
+	}
+
+}
+
+func fetchAndStoreUrl(fetchthis *url.URL) error {
 	if !doStore {
 		return nil
 	}
+
+	// Queue requesta
+	select {
+	case fetchme <- fetchthis:
+		return nil
+	default:
+		fmt.Println("Queue full")
+		return errors.New("Queue full")
+	}
+}
+
+func executeFetchAndStore(fetchme *url.URL) error {
+
 	localpath := path.Join(outPath, fetchme.Path)
 	os.MkdirAll(path.Dir(localpath), 0777)
 	_, err := os.Stat(localpath)
@@ -51,7 +78,7 @@ func fetchAndStoreUrl(fetchme *url.URL) error {
 	return nil
 }
 
-func walkSegmentTemplate(st *mpd.SegmentTemplate, periodUrl *url.URL, repId string, periodIdx, presIdx int, fetch func(*url.URL) error) {
+func walkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId string, periodIdx, presIdx int, fetch func(*url.URL) error) {
 
 	//fmt.Printf("SegmentTemplate: %+v\n", st)
 	timescale := uint64(1)
@@ -69,7 +96,7 @@ func walkSegmentTemplate(st *mpd.SegmentTemplate, periodUrl *url.URL, repId stri
 	if st.Initialization != nil {
 		init := strings.Replace(*st.Initialization, "$RepresentationID$", repId, 1)
 		//fmt.Printf("Init: %s\n", init)
-		fetch(periodUrl.JoinPath(init))
+		fetch(segmentPath.JoinPath(init))
 	}
 	// Walk the Segment
 	if st.SegmentTimeline == nil {
@@ -98,7 +125,7 @@ func walkSegmentTemplate(st *mpd.SegmentTemplate, periodUrl *url.URL, repId stri
 		for r := int64(0); r <= repeat; r++ {
 			ppa := fmt.Sprintf(media, lasttime, repId, number)
 			//fmt.Printf("Path %s:%s\n", media, ppa)
-			fullUrl := periodUrl.JoinPath(ppa)
+			fullUrl := segmentPath.JoinPath(ppa)
 			fetch(fullUrl)
 			lasttime += s.D
 			number++
@@ -147,22 +174,27 @@ func fetchAndStore(from string, fetch func(*url.URL) error) error {
 		log.Fatalln(err)
 	}
 	for periodIdx, period := range mpd.Period {
-		//fmt.Printf("BaseURL: %s\n", period.BaseURL[0].Value)
-		base := period.BaseURL[0].Value
-		baseurl, err := url.Parse(base)
-		if err != nil {
-			log.Println(err)
+		var segmentPath *url.URL
+		var baseurl *url.URL
+		if len(period.BaseURL) > 0 {
+			base := period.BaseURL[0].Value
+			baseurl, err = url.Parse(base)
+			if err != nil {
+				log.Println(err)
+			}
 		}
-		var periodUrl *url.URL
 		if baseurl.IsAbs() {
-			periodUrl = baseurl
+			segmentPath = baseurl
 		} else {
-			periodUrl = mpdUrl
-			joined, err := url.JoinPath(path.Dir(periodUrl.Path), base)
+			// Combine mpd URL and base
+			segmentPath = new(url.URL)
+			*segmentPath = *mpdUrl
+			// Cut to directory, extend by base path
+			joined, err := url.JoinPath(path.Dir(segmentPath.Path), baseurl.Path)
 			if err != nil {
 				log.Fatal(err)
 			}
-			periodUrl.Path = joined
+			segmentPath.Path = joined
 		}
 		for _, as := range period.AdaptationSets {
 			//fmt.Printf(": %+v\n", as)
@@ -171,9 +203,9 @@ func fetchAndStore(from string, fetch func(*url.URL) error) error {
 					repId := *pres.ID
 					//fmt.Printf("Representation: %+v", pres.ID)
 					if as.SegmentTemplate != nil {
-						walkSegmentTemplate(as.SegmentTemplate, periodUrl, repId, periodIdx, presIdx, fetch)
+						walkSegmentTemplate(as.SegmentTemplate, segmentPath, repId, periodIdx, presIdx, fetch)
 					} else if pres.SegmentTemplate != nil {
-						walkSegmentTemplate(pres.SegmentTemplate, periodUrl, repId, periodIdx, presIdx, fetch)
+						walkSegmentTemplate(pres.SegmentTemplate, segmentPath, repId, periodIdx, presIdx, fetch)
 					}
 				}
 			}
@@ -194,6 +226,10 @@ func main() {
 	if err := os.MkdirAll(outManifestPath, 0777); err != nil {
 		log.Fatal("Cannot create directory")
 	}
+
+	fetchme = make(chan *url.URL, backbuffer)
+
+	go fetcher()
 
 	for {
 		_ = <-ticker.C
