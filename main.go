@@ -159,13 +159,8 @@ func Round(in time.Duration) time.Duration {
 	return in / unit * unit
 }
 
-func walkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId string, periodIdx, presIdx int, fetch func(*url.URL) error) {
+func walkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId string, fetch func(*url.URL) error) {
 
-	//fmt.Printf("SegmentTemplate: %+v\n", st)
-	timescale := uint64(1)
-	if st.Timescale != nil {
-		timescale = *st.Timescale
-	}
 	//fmt.Printf("Timescale: %+v\n", timescale)
 	//fmt.Printf("Media: %+v\n", *st.Media)
 	pathTemplate := NewPathReplacer(*st.Media)
@@ -192,23 +187,21 @@ func walkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId st
 		fetch(fullUrl)
 		number++
 	}
-	// Only on first representation
-	if presIdx != 0 {
-		return
+}
+
+// Return daterange of SegmentTemplate
+func sumSegmentTemplate(st *mpd.SegmentTemplate) (from, to time.Time) {
+
+	stl := st.SegmentTimeline
+	//fmt.Printf("SegmentTemplate: %+v\n", st)
+	timescale := uint64(1)
+	if st.Timescale != nil {
+		timescale = *st.Timescale
 	}
 	ft, lt := GetTimeRange(stl)
-	from := TLP2Time(ft, timescale)
-	to := TLP2Time(lt, timescale)
-	//fmt.Printf("Mimetype: %d: %s\n", periodIdx, as.MimeType)
-	const dateShortFmt = "15:04:05.99"
-	/*
-		fmt.Printf("Duration: %d: %s %s\n",
-			periodIdx,
-			Round(to.Sub(from)),
-			Round(time.Now().Sub(to))
-	*/
-	fmt.Printf("%d: %s [%s-%s[ %s\n", periodIdx, Round(to.Sub(from)), from.Format(dateShortFmt), to.Format(dateShortFmt), Round(time.Now().Sub(to)))
-	//First time: %s\n", time.Unix(int64(ft), int64(math.Round((ft-math.Trunc(ft))*100)*1e7)))
+	from = TLP2Time(ft, timescale)
+	to = TLP2Time(lt, timescale)
+	return
 }
 
 func segmentPathFromPeriod(period *mpd.Period, mpdUrl *url.URL) *url.URL {
@@ -265,20 +258,93 @@ func fetchAndStore(from string, fetch func(*url.URL) error) error {
 	if err != nil {
 		log.Fatalln(err)
 	}
+	err = walkTimeLine(mpd)
+	if doStore {
+		err = onAllSegmentUrls(mpd, mpdUrl, fetch)
+	}
+	return err
+}
+
+// Iterate through all periods, representation, segmentTimeline and
+// call back with the URL
+func onAllSegmentUrls(mpd *mpd.MPD, mpdUrl *url.URL, action func(*url.URL) error) error {
 	// Walk all Periods, AdaptationSets and Representations
-	for periodIdx, period := range mpd.Period {
+	for _, period := range mpd.Period {
 		segmentPath := segmentPathFromPeriod(period, mpdUrl)
 		for _, as := range period.AdaptationSets {
-			for presIdx, pres := range as.Representations {
+			for _, pres := range as.Representations {
 				if pres.ID == nil {
 					continue
 				}
 				repId := *pres.ID
 				if as.SegmentTemplate != nil {
-					walkSegmentTemplate(as.SegmentTemplate, segmentPath, repId, periodIdx, presIdx, fetch)
+					walkSegmentTemplate(as.SegmentTemplate, segmentPath, repId, action)
 				} else if pres.SegmentTemplate != nil {
-					walkSegmentTemplate(pres.SegmentTemplate, segmentPath, repId, periodIdx, presIdx, fetch)
+					walkSegmentTemplate(pres.SegmentTemplate, segmentPath, repId, action)
 				}
+			}
+		}
+	}
+	return nil
+}
+
+const dateShortFmt = "15:04:05.00"
+
+// Iterate through all periods, representation, segmentTimeline and
+// call back with the URL
+func walkTimeLine(mpd *mpd.MPD) error {
+
+	now := time.Now()
+
+	if len(mpd.Period) == 0 {
+		return errors.New("No periods")
+	}
+	// TODO: Choose best period for adaptationSet Refernce
+	referencePeriod := mpd.Period[0]
+	// Choose one with Period-AdaptationSet->SegmentTemplate, which in our case is
+	// usually the live period
+	for _, period := range mpd.Period {
+		if len(period.AdaptationSets) == 0 {
+			continue
+		}
+		if period.AdaptationSets[0].SegmentTemplate != nil {
+			referencePeriod = period
+			break
+		}
+	}
+	// Walk all Periods, AdaptationSets and Representations
+	for _, as := range referencePeriod.AdaptationSets {
+		for periodIdx, period := range mpd.Period {
+			// Find the adaptationset matching the reference adaptationset
+			if len(period.AdaptationSets) == 0 {
+				continue
+			}
+			var asr = period.AdaptationSets[0]
+			for _, as := range period.AdaptationSets {
+				if asr.MimeType == as.MimeType {
+					asr = as
+					break
+				}
+			}
+
+			var from, to time.Time
+			if asr.SegmentTemplate != nil {
+				from, to = sumSegmentTemplate(asr.SegmentTemplate)
+			} else {
+				for _, pres := range as.Representations {
+					if pres.SegmentTemplate != nil {
+						from, to = sumSegmentTemplate(pres.SegmentTemplate)
+					}
+				}
+			}
+			if periodIdx == 0 {
+				fmt.Printf("%10s: %8s", as.MimeType, Round(now.Sub(from)))
+			}
+
+			fmt.Printf(" [%s-%s[", from.Format(dateShortFmt), to.Format(dateShortFmt))
+
+			if periodIdx == len(mpd.Period)-1 {
+				fmt.Printf(" %s\n", Round(now.Sub(to))) // Live edge distance
 			}
 		}
 	}
