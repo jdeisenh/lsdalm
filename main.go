@@ -84,6 +84,32 @@ func executeFetchAndStore(fetchme *url.URL) error {
 	return nil
 }
 
+// Iterator walking a SegmentTimeline S chain, returning time and duration in each step
+func All(stl *mpd.SegmentTimeline) func(func(t, d uint64) bool) {
+	return func(yield func(t, d uint64) bool) {
+		var ct uint64
+		for _, s := range stl.S {
+			var repeat int64
+			if s.T != nil {
+				ct = *s.T
+			}
+
+			if s.R != nil {
+				repeat = *s.R
+			}
+
+			for r := int64(0); r <= repeat; r++ {
+				if !yield(ct, s.D) {
+					return
+				}
+				ct += s.D
+			}
+
+		}
+	}
+
+}
+
 func walkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId string, periodIdx, presIdx int, fetch func(*url.URL) error) {
 
 	//fmt.Printf("SegmentTemplate: %+v\n", st)
@@ -106,7 +132,7 @@ func walkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId st
 	}
 	// Walk the Segment
 	if st.SegmentTimeline == nil {
-		fmt.Println("SegmentTemplate without Timeline not suported")
+		fmt.Println("SegmentTemplate without Timeline not supported")
 		return
 	}
 	stl := st.SegmentTimeline
@@ -115,27 +141,13 @@ func walkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId st
 	if st.StartNumber != nil {
 		number = int(*st.StartNumber)
 	}
-	for _, s := range stl.S {
-		var repeat int64
-		if s.T != nil {
-			if firsttime == 0 {
-				firsttime = *s.T
-			}
-			lasttime = *s.T
-		}
 
-		if s.R != nil {
-			repeat = *s.R
-		}
-
-		for r := int64(0); r <= repeat; r++ {
-			ppa := fmt.Sprintf(media, lasttime, repId, number)
-			//fmt.Printf("Path %s:%s\n", media, ppa)
-			fullUrl := segmentPath.JoinPath(ppa)
-			fetch(fullUrl)
-			lasttime += s.D
-			number++
-		}
+	for t := range All(stl) {
+		ppa := fmt.Sprintf(media, t, repId, number)
+		//fmt.Printf("Path %s:%s\n", media, ppa)
+		fullUrl := segmentPath.JoinPath(ppa)
+		fetch(fullUrl)
+		number++
 	}
 	if presIdx == 0 {
 		// Only on first representation
