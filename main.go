@@ -21,7 +21,7 @@ const doStore = true
 const outPath = "dump/"
 const outManifestPath = outPath + "manifests/"
 
-const backbuffer = 1000 // Max number of outstanding requests
+const backbuffer = 10000 // Max number of outstanding requests
 
 var fetchme chan *url.URL
 
@@ -39,6 +39,12 @@ func fetchAndStoreUrl(fetchthis *url.URL) error {
 		return nil
 	}
 
+	localpath := path.Join(outPath, fetchthis.Path)
+	_, err := os.Stat(localpath)
+	if err == nil {
+		// Assume file exists
+		return nil
+	}
 	// Queue requesta
 	select {
 	case fetchme <- fetchthis:
@@ -146,6 +152,32 @@ func walkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId st
 	}
 }
 
+func segmentPathFromPeriod(period *mpd.Period, mpdUrl *url.URL) *url.URL {
+	var segmentPath, baseurl *url.URL
+	var err error
+	if len(period.BaseURL) > 0 {
+		base := period.BaseURL[0].Value
+		baseurl, err = url.Parse(base)
+		if err != nil {
+			log.Println(err)
+		}
+	}
+	if baseurl.IsAbs() {
+		segmentPath = baseurl
+	} else {
+		// Combine mpd URL and base
+		segmentPath = new(url.URL)
+		*segmentPath = *mpdUrl
+		// Cut to directory, extend by base path
+		joined, err := url.JoinPath(path.Dir(segmentPath.Path), baseurl.Path)
+		if err != nil {
+			log.Fatal(err)
+		}
+		segmentPath.Path = joined
+	}
+	return segmentPath
+}
+
 func fetchAndStore(from string, fetch func(*url.URL) error) error {
 	mpd := new(mpd.MPD)
 
@@ -174,28 +206,7 @@ func fetchAndStore(from string, fetch func(*url.URL) error) error {
 		log.Fatalln(err)
 	}
 	for periodIdx, period := range mpd.Period {
-		var segmentPath *url.URL
-		var baseurl *url.URL
-		if len(period.BaseURL) > 0 {
-			base := period.BaseURL[0].Value
-			baseurl, err = url.Parse(base)
-			if err != nil {
-				log.Println(err)
-			}
-		}
-		if baseurl.IsAbs() {
-			segmentPath = baseurl
-		} else {
-			// Combine mpd URL and base
-			segmentPath = new(url.URL)
-			*segmentPath = *mpdUrl
-			// Cut to directory, extend by base path
-			joined, err := url.JoinPath(path.Dir(segmentPath.Path), baseurl.Path)
-			if err != nil {
-				log.Fatal(err)
-			}
-			segmentPath.Path = joined
-		}
+		segmentPath := segmentPathFromPeriod(period, mpdUrl)
 		for _, as := range period.AdaptationSets {
 			//fmt.Printf(": %+v\n", as)
 			for presIdx, pres := range as.Representations {
