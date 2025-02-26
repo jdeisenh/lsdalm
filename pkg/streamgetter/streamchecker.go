@@ -385,6 +385,7 @@ func (sc *StreamChecker) Do() error {
 	// Do once immediately, return on error
 	err := sc.fetchAndStoreManifest()
 	if err != nil {
+		sc.logger.Error().Err(err).Msg("Initial fetch")
 		return err
 	}
 	sc.ticker = time.NewTicker(sc.updateFreq)
@@ -395,7 +396,9 @@ forloop:
 		case <-sc.done:
 			break forloop
 		case <-sc.ticker.C:
-			sc.fetchAndStoreManifest()
+			if err := sc.fetchAndStoreManifest(); err != nil {
+				sc.logger.Error().Err(err).Msg("Manifest fetch")
+			}
 		}
 
 	}

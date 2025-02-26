@@ -144,11 +144,11 @@ func onAllSegmentUrls(mpd *mpd.MPD, mpdUrl *url.URL, action func(*url.URL) error
 				repId := *pres.ID
 				if as.SegmentTemplate != nil {
 					if err := walkSegmentTemplate(as.SegmentTemplate, segmentPath, repId, action); err != nil {
-						return err
+						break
 					}
 				} else if pres.SegmentTemplate != nil {
 					if err := walkSegmentTemplate(pres.SegmentTemplate, segmentPath, repId, action); err != nil {
-						return err
+						break
 					}
 				}
 			}
