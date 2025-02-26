@@ -37,4 +37,29 @@ Play a loop of the recording
 - loop points are before and after the recording
 - function to append shifted&cut periods
 - cutting need not be implemented right now, pto shift will do
-- function to extract first and last availabilty from manifest 
+x function to extract first and last availabilty from manifest 
+
+How to map
+Original location should be mapped as-is
+Cut at multiple of segment size (for encoders that keep the order)
+cut outside of ad break
+
+Request has absolute time, redirects to offset
+shift is multiples of duration
+on the seam:
+old manifest as is (assume it has a clear cutoff)
+new manifest if from the beginning, with beging cut of to the splice
+maybe always concatenate before, now and after, and run a prune on it
+
+On some point-in-time:
+
+Modulo maths,
+determine shift.
+Find if overlaps in previous or before loop
+concatenate with different shift values
+prune
+
+
+Stream Analyzer:
+
+Get URL:

@@ -22,11 +22,6 @@ const (
 	FetchQueueSize = 2000 // Max number of outstanding requests in queue
 )
 
-type HistoryElement struct {
-	At   time.Time
-	Name string
-}
-
 type StreamChecker struct {
 	name        string
 	sourceUrl   *url.URL
@@ -39,8 +34,7 @@ type StreamChecker struct {
 	ticker     *time.Ticker
 	dumpMedia  bool
 
-	logger  zerolog.Logger
-	history []HistoryElement
+	logger zerolog.Logger
 
 	// statistics
 }
@@ -56,7 +50,6 @@ func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, du
 		logger:      logger.With().Str("channel", name).Logger(),
 		done:        make(chan struct{}),
 		dumpMedia:   dumpMedia,
-		history:     make([]HistoryElement, 0, 1000),
 	}
 	var err error
 	st.sourceUrl, err = url.Parse(source)
@@ -68,54 +61,6 @@ func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, du
 		return nil, errors.New("Cannot create directory")
 	}
 	return st, nil
-}
-
-func findSub(hist []HistoryElement, want time.Time) *HistoryElement {
-
-	if len(hist) == 0 {
-		return nil
-	}
-	/*
-		tf := "15:04:05.00"
-		fmt.Printf("%d %s-%s-%s\n", len(hist), hist[0].at.Format(tf), hist[len(hist)/2].at.Format(tf), hist[len(hist)-1].at.Format(tf))
-	*/
-	if len(hist) == 1 {
-		if want.Before(hist[0].At) {
-			return nil
-		} else {
-			return &hist[0]
-		}
-	}
-	pivot := len(hist) / 2
-	if want.Before(hist[pivot].At) {
-		return findSub(hist[:pivot], want)
-	} else {
-		return findSub(hist[pivot:], want)
-	}
-}
-
-// FindHistory returns the newest element from history older than 'want'
-func (sc *StreamChecker) FindHistory(want time.Time) *HistoryElement {
-
-	ret := findSub(sc.history, want)
-	if ret == nil {
-		return nil
-	}
-	acopy := *ret
-	acopy.Name = path.Join(sc.manifestDir, ret.Name)
-	return &acopy
-}
-
-// crude loop
-func (sc *StreamChecker) FindLoopedHistory(now time.Time) (*HistoryElement, time.Duration) {
-	first := sc.history[0].At
-	last := sc.history[len(sc.history)-1].At
-	duration := last.Sub(first)
-
-	offset := now.Sub(first) % duration
-	base := now.Sub(first) / duration * duration
-	return sc.FindHistory(first.Add(offset)), base
-
 }
 
 // rewriteBaseUrl will return a URL concatenating upstream with base
@@ -130,47 +75,6 @@ func (sc *StreamChecker) rewriteBaseUrl(base string, upstream *url.URL) string {
 		return base
 	}
 	return upstream.ResolveReference(ur).String()
-}
-
-func (sc *StreamChecker) AdjustMpd(mpde *mpd.MPD, shift time.Duration) {
-	if len(mpde.Period) == 0 {
-		return
-	}
-	for _, period := range mpde.Period {
-		if len(period.BaseURL) > 0 {
-			period.BaseURL[0].Value = sc.rewriteBaseUrl(period.BaseURL[0].Value, sc.sourceUrl)
-		}
-
-		// Shift periodds
-		if period.Start != nil {
-			startmed, _ := (*period.Start).ToNanoseconds()
-			start := time.Duration(startmed)
-			*period.Start = DurationToXsdDuration(start + shift)
-		}
-	}
-	return
-}
-
-func (sc *StreamChecker) GetLooped(now time.Time) ([]byte, error) {
-
-	sourceElement, shift := sc.FindLoopedHistory(now)
-	if sourceElement == nil {
-		return []byte{}, errors.New("No source found")
-	}
-	buf, err := os.ReadFile(sourceElement.Name)
-	if err != nil {
-		return []byte{}, err
-	}
-	mpde := new(mpd.MPD)
-	if err := mpde.Decode(buf); err != nil {
-		return buf, err
-	}
-	sc.AdjustMpd(mpde, shift) // Manipulate
-	afterEncode, err := mpde.Encode()
-	if err != nil {
-		return buf, err
-	}
-	return afterEncode, nil
 }
 
 // fetchAndStoreSegment queues an URL for fetching
@@ -259,7 +163,7 @@ func (sc *StreamChecker) fetchAndStoreManifest() error {
 			sc.logger.Error().Err(err).Str("path", filepath).Msg("Write manifest")
 			return err
 		}
-		sc.history = append(sc.history, HistoryElement{now, filename})
+		//sc.history = append(sc.history, HistoryElement{now, filename})
 	}
 	if ct := resp.Header.Get("Content-Type"); ct == "application/json" {
 		var sessioninfo struct{ MediaUrl string }
@@ -418,17 +322,6 @@ forloop:
 func (sc *StreamChecker) Done() {
 	close(sc.done)
 	sc.fetchqueue <- nil
-	if len(sc.history) > 0 {
-		first := sc.history[0].At
-		last := sc.history[len(sc.history)-1].At
-		sc.logger.Info().Msgf("Recorded %d manifests from %s to %s (%s)",
-			len(sc.history),
-			first.Format(time.TimeOnly),
-			last.Format(time.TimeOnly),
-			last.Sub(first),
-		)
-	}
-
 	// Sync exit (lame)
 	time.Sleep(time.Second)
 }
@@ -445,15 +338,4 @@ func (sc *StreamChecker) fetcher() {
 	}
 	sc.logger.Debug().Msg("Close Fetcher")
 
-}
-
-func (sc *StreamChecker) Handler(w http.ResponseWriter, r *http.Request) {
-	buf, err := sc.GetLooped(time.Now())
-	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprintf(w, err.Error())
-		return
-	}
-	w.Header().Add("Content-Type", "application/dash+xml")
-	w.Write(buf)
 }
