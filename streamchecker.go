@@ -65,7 +65,7 @@ func (sc *StreamChecker) fetchAndStoreUrl(fetchthis *url.URL) error {
 		// Assume file exists
 		return nil
 	}
-	// Queue requesta
+	// Queue request
 	select {
 	case sc.fetchqueue <- fetchthis:
 		return nil
@@ -88,6 +88,7 @@ func (sc *StreamChecker) executeFetchAndStore(fetchme *url.URL) error {
 	resp, err := http.Get(fetchme.String())
 	if err != nil {
 		sc.logger.Warn().Err(err).Str("url", fetchme.String()).Msg("Fetch Segment")
+		return err
 	} else {
 		if resp.Body != nil {
 			defer resp.Body.Close()
@@ -95,11 +96,17 @@ func (sc *StreamChecker) executeFetchAndStore(fetchme *url.URL) error {
 		body, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			sc.logger.Error().Err(err).Str("url", fetchme.String()).Msg("Read Segment data")
+			return err
+		}
+		if resp.StatusCode != http.StatusOK {
+			sc.logger.Warn().Str("Segment", fetchme.String()).Int("status", resp.StatusCode).Msg("Status")
+			return errors.New("Not successful")
 		}
 		sc.logger.Debug().Str("Segment", fetchme.String()).Msg("Got")
 		err = os.WriteFile(localpath, body, 0644)
 		if err != nil {
 			sc.logger.Error().Err(err).Str("Path", localpath).Msg("Write Segment Data")
+			return err
 		}
 	}
 	return nil
