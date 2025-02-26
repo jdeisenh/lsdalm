@@ -21,6 +21,11 @@ const (
 	FetchQueueSize = 2000 // Max number of outstanding requests in queue
 )
 
+type HistoryElement struct {
+	at   time.Time
+	name string
+}
+
 type StreamChecker struct {
 	name        string
 	sourceUrl   *url.URL
@@ -32,7 +37,8 @@ type StreamChecker struct {
 	done       chan struct{}
 	ticker     *time.Ticker
 
-	logger zerolog.Logger
+	logger  zerolog.Logger
+	history []HistoryElement
 
 	// statistics
 }
@@ -47,6 +53,7 @@ func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, lo
 		fetchqueue:  make(chan *url.URL, FetchQueueSize),
 		logger:      logger.With().Str("channel", name).Logger(),
 		done:        make(chan struct{}),
+		history:     make([]HistoryElement, 0, 1000),
 	}
 	var err error
 	st.sourceUrl, err = url.Parse(source)
@@ -58,6 +65,36 @@ func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, lo
 		return nil, errors.New("Cannot create directory")
 	}
 	return st, nil
+}
+
+func findSub(hist []HistoryElement, want time.Time) *HistoryElement {
+
+	if len(hist) == 0 {
+		return nil
+	}
+	/*
+		tf := "15:04:05.00"
+		fmt.Printf("%d %s-%s-%s\n", len(hist), hist[0].at.Format(tf), hist[len(hist)/2].at.Format(tf), hist[len(hist)-1].at.Format(tf))
+	*/
+	if len(hist) == 1 {
+		if want.Before(hist[0].at) {
+			return nil
+		} else {
+			return &hist[0]
+		}
+	}
+	pivot := len(hist) / 2
+	if want.Before(hist[pivot].at) {
+		return findSub(hist[:pivot], want)
+	} else {
+		return findSub(hist[pivot:], want)
+	}
+}
+
+func (sc *StreamChecker) findHistory(want time.Time) *HistoryElement {
+
+	return findSub(sc.history, want)
+
 }
 
 // fetchAndStoreUrl queues an URL for fetching
@@ -93,25 +130,24 @@ func (sc *StreamChecker) executeFetchAndStore(fetchme *url.URL) error {
 	if err != nil {
 		sc.logger.Warn().Err(err).Str("url", fetchme.String()).Msg("Fetch Segment")
 		return err
-	} else {
-		if resp.Body != nil {
-			defer resp.Body.Close()
-		}
-		body, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			sc.logger.Error().Err(err).Str("url", fetchme.String()).Msg("Read Segment data")
-			return err
-		}
-		if resp.StatusCode != http.StatusOK {
-			sc.logger.Warn().Str("Segment", fetchme.String()).Int("status", resp.StatusCode).Msg("Status")
-			return errors.New("Not successful")
-		}
-		sc.logger.Debug().Str("Segment", fetchme.String()).Msg("Got")
-		err = os.WriteFile(localpath, body, 0644)
-		if err != nil {
-			sc.logger.Error().Err(err).Str("Path", localpath).Msg("Write Segment Data")
-			return err
-		}
+	}
+	if resp.Body != nil {
+		defer resp.Body.Close()
+	}
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		sc.logger.Error().Err(err).Str("url", fetchme.String()).Msg("Read Segment data")
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		sc.logger.Warn().Str("Segment", fetchme.String()).Int("status", resp.StatusCode).Msg("Status")
+		return errors.New("Not successful")
+	}
+	sc.logger.Debug().Str("Segment", fetchme.String()).Msg("Got")
+	err = os.WriteFile(localpath, body, 0644)
+	if err != nil {
+		sc.logger.Error().Err(err).Str("Path", localpath).Msg("Write Segment Data")
+		return err
 	}
 	return nil
 }
@@ -134,12 +170,15 @@ func (sc *StreamChecker) fetchAndStore() error {
 	}
 	if sc.dumpdir != "" {
 		// Store the manifest
-		filename := path.Join(sc.manifestDir, time.Now().UTC().Format(ManifestFormat))
-		err = os.WriteFile(filename, contents, 0644)
+		now := time.Now()
+		filename := now.UTC().Format(ManifestFormat)
+		filepath := path.Join(sc.manifestDir, filename)
+		err = os.WriteFile(filepath, contents, 0644)
 		if err != nil {
-			sc.logger.Error().Err(err).Str("path", filename).Msg("Write segment")
+			sc.logger.Error().Err(err).Str("path", filepath).Msg("Write manifest")
 			return err
 		}
+		sc.history = append(sc.history, HistoryElement{now, filename})
 	}
 	err = mpd.Decode(contents)
 	if err != nil {
@@ -261,6 +300,7 @@ forloop:
 func (sc *StreamChecker) Done() {
 	close(sc.done)
 	sc.fetchqueue <- nil
+
 	// Sync exit (lame)
 	time.Sleep(time.Second)
 }
