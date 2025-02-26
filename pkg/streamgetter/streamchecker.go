@@ -93,10 +93,83 @@ func findSub(hist []HistoryElement, want time.Time) *HistoryElement {
 	}
 }
 
+// FindHistory returns the newest element from history older than 'want'
 func (sc *StreamChecker) FindHistory(want time.Time) *HistoryElement {
 
-	return findSub(sc.history, want)
+	ret := findSub(sc.history, want)
+	if ret == nil {
+		return nil
+	}
+	acopy := *ret
+	acopy.Name = path.Join(sc.manifestDir, ret.Name)
+	return &acopy
+}
 
+// crude loop
+func (sc *StreamChecker) FindLoopedHistory(now time.Time) (*HistoryElement, time.Duration) {
+	first := sc.history[0].At
+	last := sc.history[len(sc.history)-1].At
+	duration := last.Sub(first)
+
+	offset := now.Sub(first) % duration
+	base := now.Sub(first) / duration * duration
+	return sc.FindHistory(first.Add(offset)), base
+
+}
+
+// rewriteBaseUrl will return a URL concatenating upstream with base
+func (sc *StreamChecker) rewriteBaseUrl(base string, upstream *url.URL) string {
+	// Check for relative URL
+	ur, e := url.Parse(base)
+	if e != nil {
+		sc.logger.Warn().Err(e).Msg("URL parsing")
+		return base
+	}
+	if ur.IsAbs() {
+		return base
+	}
+	return upstream.ResolveReference(ur).String()
+}
+
+func (sc *StreamChecker) AdjustMpd(mpde *mpd.MPD, shift time.Duration) {
+	if len(mpde.Period) == 0 {
+		return
+	}
+	for _, period := range mpde.Period {
+		if len(period.BaseURL) > 0 {
+			period.BaseURL[0].Value = sc.rewriteBaseUrl(period.BaseURL[0].Value, sc.sourceUrl)
+		}
+
+		// Shift periodds
+		if period.Start != nil {
+			startmed, _ := (*period.Start).ToNanoseconds()
+			start := time.Duration(startmed)
+			*period.Start = DurationToXsdDuration(start + shift)
+		}
+	}
+	return
+}
+
+func (sc *StreamChecker) GetLooped(now time.Time) ([]byte, error) {
+
+	sourceElement, shift := sc.FindLoopedHistory(now)
+	if sourceElement == nil {
+		return []byte{}, errors.New("No source found")
+	}
+	buf, err := os.ReadFile(sourceElement.Name)
+	if err != nil {
+		return []byte{}, err
+	}
+	mpde := new(mpd.MPD)
+	if err := mpde.Decode(buf); err != nil {
+		return buf, err
+	}
+	sc.AdjustMpd(mpde, shift) // Manipulate
+	afterEncode, err := mpde.Encode()
+	if err != nil {
+		return buf, err
+	}
+	return afterEncode, nil
 }
 
 // fetchAndStoreUrl queues an URL for fetching
@@ -329,4 +402,15 @@ func (sc *StreamChecker) fetcher() {
 	}
 	sc.logger.Debug().Msg("Close Fetcher")
 
+}
+
+func (sc *StreamChecker) Handler(w http.ResponseWriter, r *http.Request) {
+	buf, err := sc.GetLooped(time.Now())
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprintf(w, err.Error())
+		return
+	}
+	w.Header().Add("Content-Type", "application/dash+xml")
+	w.Write(buf)
 }

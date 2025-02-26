@@ -2,26 +2,17 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"net/http"
 	"os"
-	"path"
 	"time"
 
 	"github.com/rs/zerolog"
 	"gitlab.com/nowtilus/streamgetter/pkg/streamgetter"
 )
 
-var offset time.Duration
-
-var sg *streamgetter.StreamChecker
-
-var logger zerolog.Logger
-var dumpdir string
-
 func main() {
 
-	logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
+	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
 
 	url := flag.String("url", "", "Channel URL")
 	name := flag.String("name", "default", "Channel ID")
@@ -33,8 +24,6 @@ func main() {
 
 	flag.Parse()
 
-	dumpdir = *dump
-
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 
 	if *debug {
@@ -45,7 +34,7 @@ func main() {
 		return
 	}
 	var err error
-	sg, err = streamgetter.NewStreamChecker(*name, *url, *dump, *pollTime, *dumpMedia, logger)
+	sg, err := streamgetter.NewStreamChecker(*name, *url, *dump, *pollTime, *dumpMedia, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Send()
 		return
@@ -53,27 +42,10 @@ func main() {
 	if *timeLimit == time.Duration(0) {
 		sg.Do()
 	} else {
-		start := time.Now()
 		go sg.Do()
 		time.Sleep(*timeLimit)
-		end := time.Now()
-		offset = end.Sub(start)
 		sg.Done()
-		logger.Info().Msgf("Recorded from %s to %s (%s)", start.Format(time.TimeOnly), end.Format(time.TimeOnly), offset)
-		http.HandleFunc("/manifest.mpd", handler)
+		http.HandleFunc("/manifest.mpd", sg.Handler)
 		logger.Fatal().Err(http.ListenAndServe(":8080", nil)).Send()
 	}
-}
-
-func handler(w http.ResponseWriter, r *http.Request) {
-	wantAt := time.Now().Add(-offset).Add(-30 * time.Second)
-	found := sg.FindHistory(wantAt)
-	if found == nil {
-		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprintf(w, "it's 404")
-		return
-	}
-	path := path.Join(dumpdir, "manifests", found.Name)
-	logger.Info().Str("path", path).Msg("Deliver")
-	http.ServeFile(w, r, path)
 }
