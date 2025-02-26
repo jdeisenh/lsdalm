@@ -17,6 +17,7 @@ import (
 
 const (
 	ManifestPath   = "manifests"
+	ManifestFormat = "manifest-2006-01-02T15:04:05Z.mpd"
 	FetchQueueSize = 2000 // Max number of outstanding requests in queue
 )
 
@@ -130,7 +131,7 @@ func (sc *StreamChecker) fetchAndStore() error {
 	}
 	if sc.dumpdir != "" {
 		// Store the manifest
-		filename := path.Join(sc.manifestDir, "manifest-"+time.Now().Format(time.TimeOnly)+".mpd")
+		filename := path.Join(sc.manifestDir, time.Now().UTC().Format(ManifestFormat))
 		err = os.WriteFile(filename, contents, 0644)
 		if err != nil {
 			sc.logger.Error().Err(err).Str("path", filename).Msg("Write segment")

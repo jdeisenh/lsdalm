@@ -9,10 +9,6 @@ import (
 	"gitlab.com/nowtilus/streamgetter/pkg/streamgetter"
 )
 
-const (
-	defaultPollTime = 1920 * time.Millisecond
-)
-
 func main() {
 
 	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()

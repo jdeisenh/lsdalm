@@ -1,7 +1,7 @@
 package streamgetter
 
 import (
-	"fmt"
+	"errors"
 	"log"
 	"net/url"
 	"path"
@@ -54,20 +54,16 @@ func All(stl *mpd.SegmentTimeline) func(func(t, d uint64) bool) {
 }
 
 // walkSegmentTemplate walks a segmentTemplate and calls 'action' on all media Segments with their full URL
-func walkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId string, action func(*url.URL) error) {
+func walkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId string, action func(*url.URL) error) error {
 
-	//fmt.Printf("Timescale: %+v\n", timescale)
-	//fmt.Printf("Media: %+v\n", *st.Media)
 	pathTemplate := NewPathReplacer(*st.Media)
 	if st.Initialization != nil {
 		init := strings.Replace(*st.Initialization, "$RepresentationID$", repId, 1)
-		//fmt.Printf("Init: %s\n", init)
 		action(segmentPath.JoinPath(init))
 	}
 	// Walk the Segment
 	if st.SegmentTimeline == nil {
-		fmt.Println("SegmentTemplate without Timeline not supported")
-		return
+		return errors.New("SegmentTemplate without Timeline not supported")
 	}
 	stl := st.SegmentTimeline
 	number := 0
@@ -82,6 +78,7 @@ func walkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId st
 		action(fullUrl)
 		number++
 	}
+	return nil
 }
 
 // sumSegmentTemplate returns first and last presentationTime of a SegmentTemplate with Timeline
@@ -146,9 +143,13 @@ func onAllSegmentUrls(mpd *mpd.MPD, mpdUrl *url.URL, action func(*url.URL) error
 				}
 				repId := *pres.ID
 				if as.SegmentTemplate != nil {
-					walkSegmentTemplate(as.SegmentTemplate, segmentPath, repId, action)
+					if err := walkSegmentTemplate(as.SegmentTemplate, segmentPath, repId, action); err != nil {
+						return err
+					}
 				} else if pres.SegmentTemplate != nil {
-					walkSegmentTemplate(pres.SegmentTemplate, segmentPath, repId, action)
+					if err := walkSegmentTemplate(pres.SegmentTemplate, segmentPath, repId, action); err != nil {
+						return err
+					}
 				}
 			}
 		}
