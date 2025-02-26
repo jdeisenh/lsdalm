@@ -22,8 +22,8 @@ const (
 )
 
 type HistoryElement struct {
-	at   time.Time
-	name string
+	At   time.Time
+	Name string
 }
 
 type StreamChecker struct {
@@ -36,6 +36,7 @@ type StreamChecker struct {
 	fetchqueue chan *url.URL
 	done       chan struct{}
 	ticker     *time.Ticker
+	dumpMedia  bool
 
 	logger  zerolog.Logger
 	history []HistoryElement
@@ -43,7 +44,7 @@ type StreamChecker struct {
 	// statistics
 }
 
-func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, logger zerolog.Logger) (*StreamChecker, error) {
+func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, dumpMedia bool, logger zerolog.Logger) (*StreamChecker, error) {
 
 	st := &StreamChecker{
 		name:        name,
@@ -53,6 +54,7 @@ func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, lo
 		fetchqueue:  make(chan *url.URL, FetchQueueSize),
 		logger:      logger.With().Str("channel", name).Logger(),
 		done:        make(chan struct{}),
+		dumpMedia:   dumpMedia,
 		history:     make([]HistoryElement, 0, 1000),
 	}
 	var err error
@@ -77,21 +79,21 @@ func findSub(hist []HistoryElement, want time.Time) *HistoryElement {
 		fmt.Printf("%d %s-%s-%s\n", len(hist), hist[0].at.Format(tf), hist[len(hist)/2].at.Format(tf), hist[len(hist)-1].at.Format(tf))
 	*/
 	if len(hist) == 1 {
-		if want.Before(hist[0].at) {
+		if want.Before(hist[0].At) {
 			return nil
 		} else {
 			return &hist[0]
 		}
 	}
 	pivot := len(hist) / 2
-	if want.Before(hist[pivot].at) {
+	if want.Before(hist[pivot].At) {
 		return findSub(hist[:pivot], want)
 	} else {
 		return findSub(hist[pivot:], want)
 	}
 }
 
-func (sc *StreamChecker) findHistory(want time.Time) *HistoryElement {
+func (sc *StreamChecker) FindHistory(want time.Time) *HistoryElement {
 
 	return findSub(sc.history, want)
 
@@ -186,7 +188,7 @@ func (sc *StreamChecker) fetchAndStore() error {
 		return err
 	}
 	err = sc.walkMpd(mpd)
-	if sc.dumpdir != "" {
+	if sc.dumpdir != "" && sc.dumpMedia {
 		err = onAllSegmentUrls(mpd, sc.sourceUrl, sc.fetchAndStoreUrl)
 	}
 	return err
@@ -273,7 +275,7 @@ func (sc *StreamChecker) walkMpd(mpd *mpd.MPD) error {
 	return nil
 }
 
-// Do fetches and analyzes forever
+// Do fetches and analyzes until 'done' is signaled
 func (sc *StreamChecker) Do() error {
 
 	// Do once immediately, return on error
@@ -293,13 +295,23 @@ forloop:
 		}
 
 	}
-	sc.logger.Info().Msg("Close Ticker")
+	sc.logger.Debug().Msg("Close Ticker")
 	return nil
 }
 
 func (sc *StreamChecker) Done() {
 	close(sc.done)
 	sc.fetchqueue <- nil
+	if len(sc.history) > 0 {
+		first := sc.history[0].At
+		last := sc.history[len(sc.history)-1].At
+		sc.logger.Info().Msgf("Recorded %d manifests from %s to %s (%s)",
+			len(sc.history),
+			first.Format(time.TimeOnly),
+			last.Format(time.TimeOnly),
+			last.Sub(first),
+		)
+	}
 
 	// Sync exit (lame)
 	time.Sleep(time.Second)
@@ -315,6 +327,6 @@ func (sc *StreamChecker) fetcher() {
 		}
 		sc.executeFetchAndStore(i)
 	}
-	sc.logger.Info().Msg("Close Fetcher")
+	sc.logger.Debug().Msg("Close Fetcher")
 
 }
