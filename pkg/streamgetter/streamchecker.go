@@ -362,15 +362,15 @@ func (sc *StreamChecker) walkMpd(mpd *mpd.MPD) error {
 			}
 			if periodIdx == 0 {
 				// Line start: mimetype, timeshiftBufferDepth
-				msg = fmt.Sprintf("%10s: %8s", as.MimeType, RoundTo(now.Sub(from), time.Second))
+				msg = fmt.Sprintf("%15s: %8s", as.MimeType, RoundTo(now.Sub(from), time.Second))
 			} else if gap := from.Sub(theGap); gap > time.Millisecond || gap < -time.Millisecond {
 				msg += fmt.Sprintf("GAP: %s", Round(gap))
 			}
 
-			msg += fmt.Sprintf(" [%s-(%s)-%s[", from.Format(dateShortFmt), Round(to.Sub(from)), to.Format(dateShortFmt))
+			msg += fmt.Sprintf(" [%s-(%7s)-%s[", from.Format(dateShortFmt), Round(to.Sub(from)), to.Format(dateShortFmt))
 
 			if periodIdx == len(mpd.Period)-1 {
-				msg += fmt.Sprintf(" %s", RoundTo(now.Sub(to), time.Second)) // Live edge distance
+				msg += fmt.Sprintf(" %.1fs", float64(now.Sub(to)/(time.Second/10))/10.0) // Live edge distance
 			}
 			theGap = to
 		}

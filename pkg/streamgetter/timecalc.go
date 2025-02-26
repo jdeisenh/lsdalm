@@ -6,10 +6,10 @@ import (
 	"github.com/unki2aut/go-xsd-types"
 )
 
-// TLP2Duration Converts timestamp withtimescale to Duration
+// TLP2Duration converts timestamp with timescale to time.Duration
 func TLP2Duration(pts uint64, timescale uint64) time.Duration {
 	secs := pts / timescale
-	nsecs := (pts * timescale) % 1000000000
+	nsecs := (pts % timescale) * 1000000000 / timescale
 	return time.Duration(secs)*time.Second + time.Duration(nsecs)*time.Nanosecond
 }
 
