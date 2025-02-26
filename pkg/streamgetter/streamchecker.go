@@ -327,7 +327,10 @@ func (sc *StreamChecker) walkMpd(mpd *mpd.MPD) error {
 			break
 		}
 	}
-	// Walk all Periods, AdaptationSets and Representations
+	// Walk all AdaptationSets, Periods, and Representations
+	// To have one AdaptationSet on one line for all Periods,
+	// we use the list of Adaptations from the reference Period
+	// and try to match all others to that
 	var theGap time.Time
 	for _, as := range referencePeriod.AdaptationSets {
 		msg := ""
@@ -336,10 +339,12 @@ func (sc *StreamChecker) walkMpd(mpd *mpd.MPD) error {
 			if len(period.AdaptationSets) == 0 {
 				continue
 			}
+			// Default is first if not found
 			var asr = period.AdaptationSets[0]
-			for _, as := range period.AdaptationSets {
-				if asr.MimeType == as.MimeType {
-					asr = as
+			for asi, asfinder := range period.AdaptationSets {
+				if as.MimeType == asfinder.MimeType && (as.Codecs == nil || asfinder.Codecs == nil || *as.Codecs == *asfinder.Codecs) {
+					sc.logger.Trace().Msgf("Mime-Type %s found in asi %d", asfinder.MimeType, asi)
+					asr = asfinder
 					break
 				}
 			}
@@ -362,7 +367,11 @@ func (sc *StreamChecker) walkMpd(mpd *mpd.MPD) error {
 			}
 			if periodIdx == 0 {
 				// Line start: mimetype, timeshiftBufferDepth
-				msg = fmt.Sprintf("%15s: %8s", as.MimeType, RoundTo(now.Sub(from), time.Second))
+				codecs := ""
+				if asr.Codecs != nil {
+					codecs = "/" + *asr.Codecs
+				}
+				msg = fmt.Sprintf("%30s: %8s", asr.MimeType+codecs, RoundTo(now.Sub(from), time.Second))
 			} else if gap := from.Sub(theGap); gap > time.Millisecond || gap < -time.Millisecond {
 				msg += fmt.Sprintf("GAP: %s", Round(gap))
 			}
