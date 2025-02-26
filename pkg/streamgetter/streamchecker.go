@@ -29,6 +29,8 @@ type StreamChecker struct {
 	// Duration for manifests
 	updateFreq time.Duration
 	fetchqueue chan *url.URL
+	done       chan struct{}
+	ticker     *time.Ticker
 
 	logger zerolog.Logger
 
@@ -44,6 +46,7 @@ func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, lo
 		manifestDir: path.Join(dumpdir, ManifestPath),
 		fetchqueue:  make(chan *url.URL, FetchQueueSize),
 		logger:      logger.With().Str("channel", name).Logger(),
+		done:        make(chan struct{}),
 	}
 	var err error
 	st.sourceUrl, err = url.Parse(source)
@@ -239,20 +242,39 @@ func (sc *StreamChecker) Do() error {
 	if err != nil {
 		return err
 	}
-	ticker := time.NewTicker(sc.updateFreq)
+	sc.ticker = time.NewTicker(sc.updateFreq)
+	defer sc.ticker.Stop()
+forloop:
 	for {
-		_ = <-ticker.C
-		sc.fetchAndStore()
+		select {
+		case <-sc.done:
+			break forloop
+		case <-sc.ticker.C:
+			sc.fetchAndStore()
+		}
 
 	}
+	sc.logger.Info().Msg("Close Ticker")
+	return nil
+}
 
+func (sc *StreamChecker) Done() {
+	close(sc.done)
+	sc.fetchqueue <- nil
+	// Sync exit (lame)
+	time.Sleep(time.Second)
 }
 
 // Goroutine
 func (sc *StreamChecker) fetcher() {
 
 	for i := range sc.fetchqueue {
+		if i == nil {
+			// Exit signal
+			break
+		}
 		sc.executeFetchAndStore(i)
 	}
+	sc.logger.Info().Msg("Close Fetcher")
 
 }

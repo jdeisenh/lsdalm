@@ -18,6 +18,7 @@ func main() {
 	debug := flag.Bool("debug", false, "set log level to debug")
 	dump := flag.String("dumpdir", "", "Directory to dump segments")
 	pollTime := flag.Duration("pollInterval", 5*time.Second, "Poll Interval in milliseconds")
+	timeLimit := flag.Duration("timelimit", 0, "Time limit")
 
 	flag.Parse()
 
@@ -36,7 +37,11 @@ func main() {
 		logger.Fatal().Err(err).Send()
 		return
 	}
-
-	st.Do()
-
+	if *timeLimit == time.Duration(0) {
+		st.Do()
+	} else {
+		go st.Do()
+		time.Sleep(*timeLimit)
+		st.Done()
+	}
 }
