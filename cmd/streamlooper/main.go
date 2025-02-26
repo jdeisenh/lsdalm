@@ -13,7 +13,6 @@ func main() {
 
 	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
 
-	url := flag.String("url", "", "Channel URL")
 	debug := flag.Bool("debug", false, "set log level to debug")
 	dump := flag.String("dumpdir", "", "Directory to dump segments")
 
@@ -24,12 +23,12 @@ func main() {
 	if *debug {
 		zerolog.SetGlobalLevel(zerolog.DebugLevel)
 	}
-	if *url == "" {
+	if *dump == "" {
 		flag.Usage()
 		return
 	}
 	var err error
-	sg, err := streamgetter.NewStreamLooper(*url, *dump, logger)
+	sg, err := streamgetter.NewStreamLooper(*dump, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Send()
 		return
@@ -37,5 +36,6 @@ func main() {
 	// Todo: Load data
 	// Paths for segments
 	http.HandleFunc("/manifest.mpd", sg.Handler)
+	http.HandleFunc("/dash/", sg.FileHandler)
 	logger.Fatal().Err(http.ListenAndServe(":8080", nil)).Send()
 }

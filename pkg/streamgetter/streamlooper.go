@@ -2,7 +2,6 @@ package streamgetter
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,7 +19,6 @@ type HistoryElement struct {
 }
 
 type StreamLooper struct {
-	sourceUrl   *url.URL
 	dumpdir     string
 	manifestDir string
 
@@ -30,7 +28,7 @@ type StreamLooper struct {
 	// statistics
 }
 
-func NewStreamLooper(source, dumpdir string, logger zerolog.Logger) (*StreamLooper, error) {
+func NewStreamLooper(dumpdir string, logger zerolog.Logger) (*StreamLooper, error) {
 
 	st := &StreamLooper{
 		dumpdir:     dumpdir,
@@ -38,12 +36,30 @@ func NewStreamLooper(source, dumpdir string, logger zerolog.Logger) (*StreamLoop
 		logger:      logger,
 		history:     make([]HistoryElement, 0, 1000),
 	}
-	var err error
-	st.sourceUrl, err = url.Parse(source)
-	if err != nil {
-		return nil, err
-	}
+	st.fillData()
+	st.ShowStats()
 	return st, nil
+}
+
+func (sc *StreamLooper) fillData() error {
+	files, err := os.ReadDir(sc.manifestDir)
+	if err != nil {
+		sc.logger.Error().Err(err).Msg("Scan directories")
+		return err
+	}
+	for _, f := range files {
+		if f.IsDir() {
+			continue
+		}
+		sc.logger.Trace().Msg(f.Name())
+		time, err := time.Parse(ManifestFormat, f.Name())
+		if err != nil {
+			sc.logger.Warn().Err(err).Msg("Parse String")
+			continue
+		}
+		sc.history = append(sc.history, HistoryElement{At: time, Name: f.Name()})
+	}
+	return nil
 }
 
 // findSub finds a HistoryElement recursively
@@ -100,9 +116,12 @@ func (sc *StreamLooper) AdjustMpd(mpde *mpd.MPD, shift time.Duration) {
 		return
 	}
 	for _, period := range mpde.Period {
-		if len(period.BaseURL) > 0 {
-			period.BaseURL[0].Value = sc.rewriteBaseUrl(period.BaseURL[0].Value, sc.sourceUrl)
-		}
+		/*
+			Delete?
+			if len(period.BaseURL) > 0 {
+				period.BaseURL[0].Value = sc.rewriteBaseUrl(period.BaseURL[0].Value, sc.sourceUrl)
+			}
+		*/
 
 		// Shift periodds
 		if period.Start != nil {
@@ -136,15 +155,23 @@ func (sc *StreamLooper) GetLooped(now time.Time) ([]byte, error) {
 	return afterEncode, nil
 }
 
+// Handler serves manifests
 func (sc *StreamLooper) Handler(w http.ResponseWriter, r *http.Request) {
 	buf, err := sc.GetLooped(time.Now())
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprintf(w, err.Error())
 		return
 	}
 	w.Header().Add("Content-Type", "application/dash+xml")
 	w.Write(buf)
+}
+
+// FileHanlder serves data
+func (sc *StreamLooper) FileHandler(w http.ResponseWriter, r *http.Request) {
+	//urlpath := strings.TrimPrefix(r.URL.Path, "/dash/")
+	filepath := path.Join(sc.dumpdir, r.URL.Path)
+	sc.logger.Trace().Str("path", filepath).Msg("Access")
+	http.ServeFile(w, r, filepath)
 }
 
 func (sc *StreamLooper) ShowStats() {
