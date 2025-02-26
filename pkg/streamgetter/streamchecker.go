@@ -1,6 +1,7 @@
 package streamgetter
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -172,8 +173,8 @@ func (sc *StreamChecker) GetLooped(now time.Time) ([]byte, error) {
 	return afterEncode, nil
 }
 
-// fetchAndStoreUrl queues an URL for fetching
-func (sc *StreamChecker) fetchAndStoreUrl(fetchthis *url.URL) error {
+// fetchAndStoreSegment queues an URL for fetching
+func (sc *StreamChecker) fetchAndStoreSegment(fetchthis *url.URL) error {
 
 	localpath := path.Join(sc.dumpdir, fetchthis.Path)
 	_, err := os.Stat(localpath)
@@ -229,19 +230,24 @@ func (sc *StreamChecker) executeFetchAndStore(fetchme *url.URL) error {
 
 // fetchAndStore gets a manifest from URL, decode the manifest, dump stats, and calls back the action
 // callback on all Segments
-func (sc *StreamChecker) fetchAndStore() error {
-	mpd := new(mpd.MPD)
+func (sc *StreamChecker) fetchAndStoreManifest() error {
 
 	resp, err := http.Get(sc.sourceUrl.String())
 	if err != nil {
 		sc.logger.Error().Err(err).Str("source", sc.sourceUrl.String()).Msg("Get Manifest")
 		return err
 	}
-	defer resp.Body.Close()
+	if resp.Body != nil {
+		defer resp.Body.Close()
+	}
 	contents, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		sc.logger.Error().Err(err).Str("source", sc.sourceUrl.String()).Msg("Get Manifest data")
 		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		sc.logger.Warn().Int("status", resp.StatusCode).Msg("Manifest fetch")
+		return errors.New("Not successful")
 	}
 	if sc.dumpdir != "" {
 		// Store the manifest
@@ -255,14 +261,39 @@ func (sc *StreamChecker) fetchAndStore() error {
 		}
 		sc.history = append(sc.history, HistoryElement{now, filename})
 	}
+	if ct := resp.Header.Get("Content-Type"); ct == "application/json" {
+		var sessioninfo struct{ MediaUrl string }
+		err := json.Unmarshal(contents, &sessioninfo)
+		if err != nil {
+			sc.logger.Error().Err(err).Msg("parse view route")
+			return err
+		}
+		if sessioninfo.MediaUrl == "" {
+			sc.logger.Error().Msg("no MediaURL or empty")
+			return fmt.Errorf("No MediaURL in json")
+		}
+		sessionUrl, err := url.Parse(sessioninfo.MediaUrl)
+		if err != nil {
+			sc.logger.Error().Err(err).Msg("Session Url not parsable")
+			return err
+		}
+		sc.logger.Info().Str("url", sessioninfo.MediaUrl).Msg("Open session")
+		sc.sourceUrl = sessionUrl
+		// Call myself
+		return sc.fetchAndStoreManifest()
+
+	}
+
+	mpd := new(mpd.MPD)
 	err = mpd.Decode(contents)
 	if err != nil {
-		sc.logger.Error().Err(err).Msg("Parse Manifest")
+		sc.logger.Error().Err(err).Msgf("Parse Manifest size %d", len(contents))
+		sc.logger.Debug().Msg(string(contents))
 		return err
 	}
 	err = sc.walkMpd(mpd)
 	if sc.dumpdir != "" && sc.dumpMedia {
-		err = onAllSegmentUrls(mpd, sc.sourceUrl, sc.fetchAndStoreUrl)
+		err = onAllSegmentUrls(mpd, sc.sourceUrl, sc.fetchAndStoreSegment)
 	}
 	return err
 }
@@ -336,7 +367,7 @@ func (sc *StreamChecker) walkMpd(mpd *mpd.MPD) error {
 				msg += fmt.Sprintf("GAP: %s", Round(gap))
 			}
 
-			msg += fmt.Sprintf(" [%s-%s[", from.Format(dateShortFmt), to.Format(dateShortFmt))
+			msg += fmt.Sprintf(" [%s-(%s)-%s[", from.Format(dateShortFmt), Round(to.Sub(from)), to.Format(dateShortFmt))
 
 			if periodIdx == len(mpd.Period)-1 {
 				msg += fmt.Sprintf(" %s", RoundTo(now.Sub(to), time.Second)) // Live edge distance
@@ -352,7 +383,7 @@ func (sc *StreamChecker) walkMpd(mpd *mpd.MPD) error {
 func (sc *StreamChecker) Do() error {
 
 	// Do once immediately, return on error
-	err := sc.fetchAndStore()
+	err := sc.fetchAndStoreManifest()
 	if err != nil {
 		return err
 	}
@@ -364,7 +395,7 @@ forloop:
 		case <-sc.done:
 			break forloop
 		case <-sc.ticker.C:
-			sc.fetchAndStore()
+			sc.fetchAndStoreManifest()
 		}
 
 	}
