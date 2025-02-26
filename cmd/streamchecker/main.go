@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	//"gitlab.com/nowtilus/eventinjector/pkg/go-mpd"
+	"gitlab.com/nowtilus/streamgetter/pkg/streamgetter"
 )
 
 const (
@@ -35,7 +35,7 @@ func main() {
 		return
 	}
 
-	st, err := NewStreamChecker(*name, *url, *dump, *pollTime, logger)
+	st, err := streamgetter.NewStreamChecker(*name, *url, *dump, *pollTime, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Send()
 		return
