@@ -2,6 +2,7 @@ package streamgetter
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -13,6 +14,13 @@ import (
 	"github.com/unki2aut/go-mpd"
 )
 
+// Data about our stream. Hardcoded from testing, must be dynamic
+const (
+	segmentSize         = 384 * time.Millisecond // 3.84s
+	timeShiftWindowSize = 1 * time.Minute        //
+)
+
+// HistoryElement is metadata about a stored Manifest
 type HistoryElement struct {
 	At   time.Time
 	Name string
@@ -37,10 +45,15 @@ func NewStreamLooper(dumpdir string, logger zerolog.Logger) (*StreamLooper, erro
 		history:     make([]HistoryElement, 0, 1000),
 	}
 	st.fillData()
+	if len(st.history) < 10 {
+		return nil, fmt.Errorf("Not enough manifests")
+	}
 	st.ShowStats()
 	return st, nil
 }
 
+// fillData reads add the manifests
+// Todo: detect gaps
 func (sc *StreamLooper) fillData() error {
 	files, err := os.ReadDir(sc.manifestDir)
 	if err != nil {
@@ -99,18 +112,23 @@ func (sc *StreamLooper) FindHistory(want time.Time) *HistoryElement {
 	return &acopy
 }
 
-// crude loop
-func (sc *StreamLooper) FindLoopedHistory(now time.Time) (*HistoryElement, time.Duration) {
-	first := sc.history[0].At
+// Return loop metadata
+// for the position at, return offset (to recording), timeshift und loop duration
+func (sc *StreamLooper) getLoopMeta(at time.Time) (offset, shift, duration time.Duration, start time.Time) {
+
+	// Data from history buffer
+	// This is inexact, the last might not have all Segments downloaded
+	start = sc.history[0].At
 	last := sc.history[len(sc.history)-1].At
-	duration := last.Sub(first)
+	// Round duration down to segmentSize
+	duration = last.Sub(start) / segmentSize * segmentSize
 
-	offset := now.Sub(first) % duration
-	base := now.Sub(first) / duration * duration
-	return sc.FindHistory(first.Add(offset)), base
-
+	offset = at.Sub(start) % duration
+	shift = at.Sub(start) / duration * duration
+	return
 }
 
+// AdjustMpd adds a time offset to each Period in the Manifest
 func (sc *StreamLooper) AdjustMpd(mpde *mpd.MPD, shift time.Duration) {
 	if len(mpde.Period) == 0 {
 		return
@@ -133,24 +151,51 @@ func (sc *StreamLooper) AdjustMpd(mpde *mpd.MPD, shift time.Duration) {
 	return
 }
 
-func (sc *StreamLooper) GetLooped(now time.Time) ([]byte, error) {
+// Find a manifest at time 'at'
+func (sc *StreamLooper) loadHistoricMpd(at time.Time) (*mpd.MPD, error) {
 
-	sourceElement, shift := sc.FindLoopedHistory(now)
+	sourceElement := sc.FindHistory(at)
+
 	if sourceElement == nil {
-		return []byte{}, errors.New("No source found")
+		return nil, errors.New("No source found")
 	}
 	buf, err := os.ReadFile(sourceElement.Name)
 	if err != nil {
-		return []byte{}, err
+		return nil, err
 	}
 	mpde := new(mpd.MPD)
 	if err := mpde.Decode(buf); err != nil {
-		return buf, err
+		return nil, err
+	}
+	return mpde, nil
+}
+
+// GetLooped generates a Manifest by finding the manifest before now%duration
+func (sc *StreamLooper) GetLooped(at time.Time) ([]byte, error) {
+
+	at = at.Add(-102 * time.Minute)
+	offset, shift, duration, start := sc.getLoopMeta(at)
+	sc.logger.Info().Msgf("%s %s %s %s", offset, shift, duration, start)
+	mpde, err := sc.loadHistoricMpd(start.Add(offset))
+	if err != nil {
+		return []byte{}, err
 	}
 	sc.AdjustMpd(mpde, shift) // Manipulate
+
+	if offset < timeShiftWindowSize {
+		sc.logger.Info().Msg("At loop point")
+		// Get mpd from the end of the period
+		// Shift one period less
+		// cut from time-shift-window to seam
+		// and seam to live-edge
+		// shrink
+		// combine
+	}
+
+	// re-encode
 	afterEncode, err := mpde.Encode()
 	if err != nil {
-		return buf, err
+		return nil, err
 	}
 	return afterEncode, nil
 }
