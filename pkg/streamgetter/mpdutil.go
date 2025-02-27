@@ -92,6 +92,9 @@ func sumSegmentTemplate(st *mpd.SegmentTemplate, periodStart time.Time) (from, t
 		pto = *st.PresentationTimeOffset
 	}
 	stl := st.SegmentTimeline
+	if stl == nil {
+		return
+	}
 	//fmt.Printf("SegmentTemplate: %+v\n", st)
 	timescale := uint64(1)
 	if st.Timescale != nil {

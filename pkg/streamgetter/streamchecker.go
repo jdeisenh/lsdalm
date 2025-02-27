@@ -206,22 +206,22 @@ const dateShortFmt = "15:04:05.00"
 
 // Iterate through all periods, representation, segmentTimeline and
 // write statistics about timing
-func (sc *StreamChecker) walkMpd(mpd *mpd.MPD) error {
+func (sc *StreamChecker) walkMpd(mpde *mpd.MPD) error {
 
 	now := time.Now()
 
-	if len(mpd.Period) == 0 {
+	if len(mpde.Period) == 0 {
 		return errors.New("No periods")
 	}
 	var ast time.Time
-	if mpd.AvailabilityStartTime != nil {
-		ast = time.Time(*mpd.AvailabilityStartTime)
+	if mpde.AvailabilityStartTime != nil {
+		ast = time.Time(*mpde.AvailabilityStartTime)
 	}
 	// TODO: Choose best period for adaptationSet Reference
-	referencePeriod := mpd.Period[0]
+	referencePeriod := mpde.Period[0]
 	// Choose one with Period-AdaptationSet->SegmentTemplate, which in our case is
 	// usually the live period
-	for _, period := range mpd.Period {
+	for _, period := range mpde.Period {
 		if len(period.AdaptationSets) == 0 {
 			continue
 		}
@@ -236,21 +236,32 @@ func (sc *StreamChecker) walkMpd(mpd *mpd.MPD) error {
 	// we use the list of Adaptations from the reference Period
 	// and try to match all others to that
 	var theGap time.Time
-	for _, as := range referencePeriod.AdaptationSets {
+ASloop:
+	for _, asRef := range referencePeriod.AdaptationSets {
 		msg := ""
-		for periodIdx, period := range mpd.Period {
+		for periodIdx, period := range mpde.Period {
 			// Find the adaptationset matching the reference adaptationset
 			if len(period.AdaptationSets) == 0 {
 				continue
 			}
+			// Find an AdaptationSet that matches the AS in the reference period
 			// Default is first if not found
-			var asr = period.AdaptationSets[0]
-			for asi, asfinder := range period.AdaptationSets {
-				if as.MimeType == asfinder.MimeType && (as.Codecs == nil || asfinder.Codecs == nil || *as.Codecs == *asfinder.Codecs) {
-					sc.logger.Trace().Msgf("Mime-Type %s found in asi %d", asfinder.MimeType, asi)
-					asr = asfinder
-					break
+			var as *mpd.AdaptationSet
+			for _, asfinder := range period.AdaptationSets {
+				if asRef.MimeType == asfinder.MimeType && (asRef.Codecs == nil || asfinder.Codecs == nil || *asRef.Codecs == *asfinder.Codecs) {
+					sc.logger.Trace().Msgf("Mime-Type %s found in asi %d", asfinder.MimeType, asRef)
+					as = asfinder
 				}
+			}
+			if as == nil {
+				sc.logger.Debug().Msgf("Mime-Type %s not found in asi %d", asRef.MimeType)
+				msg += " N/A "
+				continue
+
+			}
+			// If there is no segmentTimeline, skip it
+			if as.SegmentTemplate == nil || as.SegmentTemplate.SegmentTimeline == nil || len(as.SegmentTemplate.SegmentTimeline.S) == 0 {
+				continue ASloop
 			}
 
 			// Calculate period start
@@ -260,9 +271,9 @@ func (sc *StreamChecker) walkMpd(mpd *mpd.MPD) error {
 				start = time.Duration(startmed)
 			}
 			periodStart := ast.Add(start)
-			from, to := sumSegmentTemplate(asr.SegmentTemplate, periodStart)
+			from, to := sumSegmentTemplate(as.SegmentTemplate, periodStart)
 			if from.IsZero() {
-				for _, pres := range asr.Representations {
+				for _, pres := range as.Representations {
 					if pres.SegmentTemplate != nil {
 						from, to = sumSegmentTemplate(pres.SegmentTemplate, periodStart)
 						break
@@ -270,19 +281,19 @@ func (sc *StreamChecker) walkMpd(mpd *mpd.MPD) error {
 				}
 			}
 			if periodIdx == 0 {
-				// Line start: mimetype, timeshiftBufferDepth
+				// Line start: mimetype+codec, timeshiftBufferDepth
 				codecs := ""
-				if asr.Codecs != nil {
-					codecs = "/" + *asr.Codecs
+				if as.Codecs != nil {
+					codecs = "/" + *asRef.Codecs
 				}
-				msg = fmt.Sprintf("%30s: %8s", asr.MimeType+codecs, RoundTo(now.Sub(from), time.Second))
+				msg = fmt.Sprintf("%30s: %8s", asRef.MimeType+codecs, RoundTo(now.Sub(from), time.Second))
 			} else if gap := from.Sub(theGap); gap > time.Millisecond || gap < -time.Millisecond {
 				msg += fmt.Sprintf("GAP: %s", Round(gap))
 			}
 
 			msg += fmt.Sprintf(" [%s-(%7s)-%s[", from.Format(dateShortFmt), Round(to.Sub(from)), to.Format(dateShortFmt))
 
-			if periodIdx == len(mpd.Period)-1 {
+			if periodIdx == len(mpde.Period)-1 {
 				msg += fmt.Sprintf(" %.1fs", float64(now.Sub(to)/(time.Second/10))/10.0) // Live edge distance
 			}
 			theGap = to
