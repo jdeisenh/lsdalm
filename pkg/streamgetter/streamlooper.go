@@ -125,7 +125,7 @@ func (sc *StreamLooper) getLoopMeta(at time.Time) (offset, shift, duration time.
 
 	offset = at.Sub(start) % duration
 	shift = at.Sub(start) / duration * duration
-	sc.logger.Info().Msgf("%s %s", at, start)
+	//sc.logger.Info().Msgf("%s %s", at, start)
 	return
 }
 
@@ -171,11 +171,16 @@ func (sc *StreamLooper) loadHistoricMpd(at time.Time) (*mpd.MPD, error) {
 	return mpde, nil
 }
 
+func RoundToS(in time.Duration) time.Duration {
+	return RoundTo(in, time.Second)
+}
+
 // GetLooped generates a Manifest by finding the manifest before now%duration
 func (sc *StreamLooper) GetLooped(at time.Time) ([]byte, error) {
 
 	offset, shift, duration, start := sc.getLoopMeta(at)
-	//sc.logger.Info().Msgf("%s %s %s %s", offset, shift, duration, start)
+	sc.logger.Info().Msgf("Offset: %s TimeShift: %s LoopDuration: %s LoopStart:%s",
+		RoundToS(offset), RoundToS(shift), RoundToS(duration), start.Format(time.TimeOnly))
 	mpde, err := sc.loadHistoricMpd(start.Add(offset))
 	if err != nil {
 		return []byte{}, err

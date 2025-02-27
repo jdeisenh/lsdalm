@@ -15,6 +15,7 @@ func main() {
 
 	debug := flag.Bool("debug", false, "set log level to debug")
 	dump := flag.String("dumpdir", "", "Directory to dump segments")
+	listen := flag.String("listen", ":9080", "Adress/port to listen")
 
 	flag.Parse()
 
@@ -37,5 +38,5 @@ func main() {
 	// Paths for segments
 	http.HandleFunc("/manifest.mpd", sg.Handler)
 	http.HandleFunc("/dash/", sg.FileHandler)
-	logger.Fatal().Err(http.ListenAndServe(":8080", nil)).Send()
+	logger.Fatal().Err(http.ListenAndServe(*listen, nil)).Send()
 }
