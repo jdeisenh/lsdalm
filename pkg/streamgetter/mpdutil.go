@@ -53,6 +53,58 @@ func All(stl *mpd.SegmentTimeline) func(func(t, d uint64) bool) {
 	}
 }
 
+// Append adds a segemnt to a SegmentTimeline
+// We do not check the time for gaps, this would require re-counting on every insert
+func Append(st *mpd.SegmentTimeline, t, d uint64) {
+	if len(st.S) == 0 {
+		st.S = append(st.S, &mpd.SegmentTimelineS{T: &t, D: d})
+		return
+	}
+	last := st.S[len(st.S)-1]
+	if last.D == d {
+		if last.R == nil {
+			r := int64(1)
+			last.R = &r
+		} else {
+			*last.R++
+		}
+	}
+}
+func filterSegmentTemplate(st *mpd.SegmentTemplate, periodStart time.Time, filter func(t time.Time, d time.Duration) bool) {
+	if st == nil || st.SegmentTimeline == nil {
+		return
+	}
+	var pto uint64
+	if st.PresentationTimeOffset != nil {
+		pto = *st.PresentationTimeOffset
+	}
+	stl := st.SegmentTimeline
+	if stl == nil {
+		return
+	}
+	//fmt.Printf("SegmentTemplate: %+v\n", st)
+	timescale := uint64(1)
+	if st.Timescale != nil {
+		timescale = *st.Timescale
+	}
+	st.SegmentTimeline = filterSegmentTimeline(st.SegmentTimeline, func(t, d uint64) bool {
+		return filter(
+			periodStart.Add(TLP2Duration(t-pto, timescale)),
+			TLP2Duration(d, timescale),
+		)
+	})
+}
+
+func filterSegmentTimeline(in *mpd.SegmentTimeline, filter func(t, d uint64) bool) *mpd.SegmentTimeline {
+	out := new(mpd.SegmentTimeline)
+	for t, d := range All(in) {
+		if filter(t, d) {
+			Append(out, t, d)
+		}
+	}
+	return out
+}
+
 // walkSegmentTemplate walks a segmentTemplate and calls 'action' on all media Segments with their full URL
 func walkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId string, action func(*url.URL) error) error {
 
