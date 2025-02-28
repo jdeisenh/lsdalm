@@ -71,6 +71,7 @@ func Append(st *mpd.SegmentTimeline, t, d uint64) {
 	}
 }
 
+// filterSegmentTemplate walks all Segments inside a Segmenttemplate, calling filter, removing every segment that the callback returns false
 func filterSegmentTemplate(st *mpd.SegmentTemplate, periodStart time.Time, filter func(t time.Time, d time.Duration) bool) (total, filtered int) {
 
 	if st == nil || st.SegmentTimeline == nil {
@@ -193,6 +194,7 @@ func segmentPathFromPeriod(period *mpd.Period, mpdUrl *url.URL) *url.URL {
 	return segmentPath
 }
 
+// shiftPto adds 'shiftValue' to the presentationTimeOffset
 func shiftPto(st *mpd.SegmentTemplate, shiftValue time.Duration) {
 
 	timescale := uint64(1)

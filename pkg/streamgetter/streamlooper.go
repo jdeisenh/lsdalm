@@ -19,7 +19,7 @@ import (
 const (
 	segmentSize         = 3840 * time.Millisecond // 3.84s
 	timeShiftWindowSize = 25 * time.Second        //
-	LoopPointOffset     = 8 * time.Second
+	LoopPointOffset     = 3 * time.Second
 )
 
 // HistoryElement is metadata about a stored Manifest
@@ -37,10 +37,6 @@ type StreamLooper struct {
 	historyStart, historyEnd time.Time
 
 	// statistics
-}
-
-func shortT(in time.Time) string {
-	return in.Format(time.TimeOnly)
 }
 
 func NewStreamLooper(dumpdir string, logger zerolog.Logger) (*StreamLooper, error) {
@@ -68,11 +64,7 @@ func (sc *StreamLooper) fillData() error {
 		return err
 	}
 	var lasttime time.Time
-	for fi, f := range files {
-		if fi > 1000 {
-			// Debug limit
-			break
-		}
+	for _, f := range files {
 		if f.IsDir() {
 			continue
 		}
@@ -154,7 +146,7 @@ func (sc *StreamLooper) getRecordingRange() (from, to time.Time) {
 
 // Return loop metadata
 // for the position at, return offset (to recording), timeshift und loop duration
-func (sc *StreamLooper) getLoopMeta(at, now time.Time) (offset, shift, duration time.Duration, start time.Time) {
+func (sc *StreamLooper) getLoopMeta(at, now time.Time, maxDuration time.Duration) (offset, shift, duration time.Duration, start time.Time) {
 
 	// Calculate the offset in the recording buffer and the timeshift (added to timestamps)
 	// Invariants:
@@ -166,6 +158,9 @@ func (sc *StreamLooper) getLoopMeta(at, now time.Time) (offset, shift, duration 
 	start, last := sc.getRecordingRange()
 	// Round duration down to segmentSize
 	duration = last.Sub(start) / segmentSize * segmentSize
+	if duration > maxDuration {
+		duration = maxDuration
+	}
 
 	offset = at.Sub(start) % duration
 	shift = now.Add(-offset).Sub(start)
@@ -247,7 +242,7 @@ func (sc *StreamLooper) filterMpd(mpde *mpd.MPD, from, to time.Time) *mpd.MPD {
 					continue
 				}
 				buf_from, buf_to := sumSegmentTemplate(as.SegmentTemplate, periodStart)
-				if first {
+				if false {
 					sc.logger.Info().Msgf("Timestamps before %d: %s-%s", asidx, shortT(buf_from), shortT(buf_to))
 				}
 				// Filter the SegmentTimeline for timestamps
@@ -262,7 +257,7 @@ func (sc *StreamLooper) filterMpd(mpde *mpd.MPD, from, to time.Time) *mpd.MPD {
 				buf_from, buf_to = sumSegmentTemplate(as.SegmentTemplate, periodStart)
 				if first {
 					//sc.logger.Info().Msgf("Total %d Filtered %d", total, filtered)
-					sc.logger.Info().Msgf("After %d: %s-%s", asidx, shortT(buf_from), shortT(buf_to))
+					sc.logger.Info().Msgf("Timestamp After %d: %s-%s", asidx, shortT(buf_from), shortT(buf_to))
 				}
 				first = false
 				retained += total - filtered
@@ -287,16 +282,18 @@ func (sc *StreamLooper) mergeMpd(mpd1, mpd2 *mpd.MPD) *mpd.MPD {
 // GetLooped generates a Manifest by finding the manifest before now%duration
 func (sc *StreamLooper) GetLooped(at, now time.Time) ([]byte, error) {
 
-	offset, shift, duration, startOfRecording := sc.getLoopMeta(at, now)
+	maxDuration := 10000 * time.Minute
+	offset, shift, duration, startOfRecording := sc.getLoopMeta(at, now, maxDuration)
 	sc.logger.Info().Msgf("Offset: %s TimeShift: %s LoopDuration: %s LoopStart:%s At %s",
 		RoundToS(offset), RoundToS(shift), RoundToS(duration), shortT(startOfRecording), shortT(at))
 	mpdCurrent, err := sc.loadHistoricMpd(startOfRecording.Add(offset))
 	if err != nil {
 		return []byte{}, err
 	}
+
 	sc.AdjustMpd(mpdCurrent, shift) // Manipulate
 
-	reframePeriods(mpdCurrent, fmt.Sprintf("Id-%d", shift/duration), startOfRecording.Add(shift))
+	reframePeriods(mpdCurrent, fmt.Sprintf("Id-%d", shift/duration), startOfRecording.Add(shift).Add(-LoopPointOffset))
 	//sc.logger.Info().Msgf("Move period: %s", startOfRecording.Add(shift))
 
 	if offset < timeShiftWindowSize {
@@ -315,7 +312,7 @@ func (sc *StreamLooper) GetLooped(at, now time.Time) ([]byte, error) {
 			mpdCurrent = sc.filterMpd(mpdCurrent, loopPoint, now)
 			// Shift
 			if mpdPrevious != nil {
-				reframePeriods(mpdPrevious, fmt.Sprintf("Id-%d", shift/duration-1), startOfRecording.Add(shift).Add(-duration))
+				reframePeriods(mpdPrevious, fmt.Sprintf("Id-%d", shift/duration-1), startOfRecording.Add(shift).Add(-duration).Add(-LoopPointOffset))
 			}
 		}
 		if mpdPrevious != nil && mpdCurrent != nil {
@@ -459,4 +456,9 @@ func (sc *StreamLooper) rewriteBaseUrl(base string, upstream *url.URL) string {
 		return base
 	}
 	return upstream.ResolveReference(ur).String()
+}
+
+// shortT returns a short string representation of the time
+func shortT(in time.Time) string {
+	return in.Format(time.TimeOnly)
 }

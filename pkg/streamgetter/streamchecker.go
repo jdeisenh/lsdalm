@@ -330,6 +330,7 @@ forloop:
 	return nil
 }
 
+// Done terminates the Streamchecker gracefully
 func (sc *StreamChecker) Done() {
 	close(sc.done)
 	sc.fetchqueue <- nil
