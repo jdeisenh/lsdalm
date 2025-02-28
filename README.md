@@ -1,4 +1,10 @@
-streamgetter
+LSDALM
+
+Work in Progress
+
+Live Stream Dumper-Analyzer-Looper-Monitor
+
+This is right now, just a scribble of rough design ideas
 
 -- record 
 store all segments to disk
@@ -51,15 +57,3 @@ old manifest as is (assume it has a clear cutoff)
 new manifest if from the beginning, with beging cut of to the splice
 maybe always concatenate before, now and after, and run a prune on it
 
-On some point-in-time:
-
-Modulo maths,
-determine shift.
-Find if overlaps in previous or before loop
-concatenate with different shift values
-prune
-
-
-Stream Analyzer:
-
-Get URL:
