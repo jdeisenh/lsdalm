@@ -237,7 +237,7 @@ func (sc *StreamChecker) walkMpd(mpde *mpd.MPD) error {
 	// and try to match all others to that
 	var theGap time.Time
 ASloop:
-	for _, asRef := range referencePeriod.AdaptationSets {
+	for asRefId, asRef := range referencePeriod.AdaptationSets {
 		msg := ""
 		for periodIdx, period := range mpde.Period {
 			// Find the adaptationset matching the reference adaptationset
@@ -247,14 +247,14 @@ ASloop:
 			// Find an AdaptationSet that matches the AS in the reference period
 			// Default is first if not found
 			var as *mpd.AdaptationSet
-			for _, asfinder := range period.AdaptationSets {
+			for asfi, asfinder := range period.AdaptationSets {
 				if asRef.MimeType == asfinder.MimeType && (asRef.Codecs == nil || asfinder.Codecs == nil || *asRef.Codecs == *asfinder.Codecs) {
-					sc.logger.Trace().Msgf("Mime-Type %s found in asi %d", asfinder.MimeType, asRef)
+					sc.logger.Trace().Msgf("Mime-Type %s found in asi %d", asfinder.MimeType, asfi)
 					as = asfinder
 				}
 			}
 			if as == nil {
-				sc.logger.Debug().Msgf("Mime-Type %s not found in asi %d", asRef.MimeType)
+				sc.logger.Debug().Msgf("Mime-Type %s not found in asi %d", asRef.MimeType, asRefId)
 				msg += " N/A "
 				continue
 

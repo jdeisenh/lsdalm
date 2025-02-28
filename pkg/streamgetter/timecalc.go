@@ -7,13 +7,13 @@ import (
 )
 
 // TLP2Duration converts timestamp with timescale to time.Duration
-func TLP2Duration(pts uint64, timescale uint64) time.Duration {
-	secs := pts / timescale
-	nsecs := (pts % timescale) * 1000000000 / timescale
+func TLP2Duration(pts int64, timescale uint64) time.Duration {
+	secs := pts / int64(timescale)
+	nsecs := (pts % int64(timescale)) * 1000000000 / int64(timescale)
 	return time.Duration(secs)*time.Second + time.Duration(nsecs)*time.Nanosecond
 }
 
-func Duration2TLP(duration time.Duration, timescale uint64) uint64 {
+func Duration2TLP(duration time.Duration, timescale uint64) int64 {
 	// Basically duration/time.Second*timescale
 	// Careful about overflow. timescale can be big We calculate in microseconds,
 	//
@@ -26,7 +26,7 @@ func Duration2TLP(duration time.Duration, timescale uint64) uint64 {
 	secs := duration / time.Second
 	nsecs := duration % time.Second * time.Nanosecond
 
-	return uint64(secs)*timescale + uint64(nsecs)*timescale/uint64(time.Second)
+	return int64(secs)*int64(timescale) + int64(nsecs)*int64(timescale)/int64(time.Second)
 }
 
 // Round duration to 100s of seconds

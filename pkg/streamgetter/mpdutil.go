@@ -2,13 +2,13 @@ package streamgetter
 
 import (
 	"errors"
-	"log"
 	"net/url"
 	"path"
 	"strings"
 	"time"
 
 	//"gitlab.com/nowtilus/eventinjector/pkg/go-mpd"
+	"github.com/rs/zerolog/log"
 	"github.com/unki2aut/go-mpd"
 )
 
@@ -70,7 +70,9 @@ func Append(st *mpd.SegmentTimeline, t, d uint64) {
 		}
 	}
 }
-func filterSegmentTemplate(st *mpd.SegmentTemplate, periodStart time.Time, filter func(t time.Time, d time.Duration) bool) {
+
+func filterSegmentTemplate(st *mpd.SegmentTemplate, periodStart time.Time, filter func(t time.Time, d time.Duration) bool) (total, filtered int) {
+
 	if st == nil || st.SegmentTimeline == nil {
 		return
 	}
@@ -88,11 +90,17 @@ func filterSegmentTemplate(st *mpd.SegmentTemplate, periodStart time.Time, filte
 		timescale = *st.Timescale
 	}
 	st.SegmentTimeline = filterSegmentTimeline(st.SegmentTimeline, func(t, d uint64) bool {
-		return filter(
-			periodStart.Add(TLP2Duration(t-pto, timescale)),
-			TLP2Duration(d, timescale),
+		total++
+		r := filter(
+			periodStart.Add(TLP2Duration(int64(t-pto), timescale)),
+			TLP2Duration(int64(d), timescale),
 		)
+		if !r {
+			filtered++
+		}
+		return r
 	})
+	return
 }
 
 func filterSegmentTimeline(in *mpd.SegmentTimeline, filter func(t, d uint64) bool) *mpd.SegmentTimeline {
@@ -153,8 +161,8 @@ func sumSegmentTemplate(st *mpd.SegmentTemplate, periodStart time.Time) (from, t
 		timescale = *st.Timescale
 	}
 	ft, lt := GetTimeRange(stl)
-	from = periodStart.Add(TLP2Duration(ft-pto, timescale))
-	to = periodStart.Add(TLP2Duration(lt-pto, timescale))
+	from = periodStart.Add(TLP2Duration(int64(ft-pto), timescale))
+	to = periodStart.Add(TLP2Duration(int64(lt-pto), timescale))
 	return
 }
 
@@ -166,7 +174,7 @@ func segmentPathFromPeriod(period *mpd.Period, mpdUrl *url.URL) *url.URL {
 		base := period.BaseURL[0].Value
 		baseurl, err = url.Parse(base)
 		if err != nil {
-			log.Println(err)
+			log.Warn().Err(err).Msg("Parse URL")
 		}
 	}
 	if baseurl.IsAbs() {
@@ -178,11 +186,68 @@ func segmentPathFromPeriod(period *mpd.Period, mpdUrl *url.URL) *url.URL {
 		// Cut to directory, extend by base path
 		joined, err := url.JoinPath(path.Dir(segmentPath.Path), baseurl.Path)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal().Err(err).Msg("Path extension")
 		}
 		segmentPath.Path = joined
 	}
 	return segmentPath
+}
+
+func shiftPto(st *mpd.SegmentTemplate, shiftValue time.Duration) {
+
+	timescale := uint64(1)
+	if st.Timescale != nil {
+		timescale = *st.Timescale
+	}
+	pto := uint64(0)
+	if lpto := st.PresentationTimeOffset; lpto != nil {
+		pto = *lpto
+	}
+	pto = uint64(int64(pto) + Duration2TLP(shiftValue, timescale))
+	// Write back
+	st.PresentationTimeOffset = &pto
+}
+
+// reframePeriods moves start of period to newStart and sets ID
+// The shift is countered by a change to presentationTimeOffset, so
+// the position on the timeline does not change
+func reframePeriods(mpde *mpd.MPD, id string, newStart time.Time) {
+	// Walk all Periods, AdaptationSets and Representations
+	// Calculate period start
+	var ast time.Time
+	if mpde.AvailabilityStartTime != nil {
+		ast = time.Time(*mpde.AvailabilityStartTime)
+	}
+	var shiftValue time.Duration
+	for _, period := range mpde.Period {
+
+		var start time.Duration
+		if period.Start != nil {
+			startmed, _ := (*period.Start).ToNanoseconds()
+			start = time.Duration(startmed)
+			//log.Warn().Msgf("Start: %s", start)
+			shiftValue = newStart.Sub(ast) - start
+			//log.Warn().Msgf("Newstart: %s", newStart)
+			//log.Warn().Msgf("Shift: %s", shiftValue)
+			*period.Start = DurationToXsdDuration(newStart.Sub(ast))
+		}
+		if period.ID != nil {
+			*period.ID = id
+		}
+
+		for _, as := range period.AdaptationSets {
+			if st := as.SegmentTemplate; st != nil {
+				shiftPto(st, shiftValue)
+			} else {
+				for _, pres := range as.Representations {
+					if st := pres.SegmentTemplate; st != nil {
+						shiftPto(st, shiftValue)
+					}
+				}
+			}
+		}
+	}
+
 }
 
 // Iterate through all periods, representation, segmentTimeline and
