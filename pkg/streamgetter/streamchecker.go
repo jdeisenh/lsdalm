@@ -287,7 +287,7 @@ ASloop:
 					codecs = "/" + *asRef.Codecs
 				}
 				msg = fmt.Sprintf("%30s: %8s", asRef.MimeType+codecs, RoundTo(now.Sub(from), time.Second))
-			} else if gap := from.Sub(theGap); gap > time.Millisecond || gap < -time.Millisecond {
+			} else if gap := from.Sub(theGap); gap > 10*time.Millisecond || gap < -10*time.Millisecond {
 				msg += fmt.Sprintf("GAP: %s", Round(gap))
 			}
 

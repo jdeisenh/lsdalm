@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"time"
 
 	//"gitlab.com/nowtilus/eventinjector/pkg/go-mpd"
@@ -180,10 +181,12 @@ func (sc *StreamLooper) loadHistoricMpd(at time.Time) (*mpd.MPD, error) {
 	return mpde, nil
 }
 
+// RoundToS Rounds a duration to full seconds
 func RoundToS(in time.Duration) time.Duration {
 	return RoundTo(in, time.Second)
 }
 
+// filterMpd drops every segment reference outside from-to timeframe from the mpd
 func (sc *StreamLooper) filterMpd(mpde *mpd.MPD, from, to time.Time) *mpd.MPD {
 	var ast time.Time
 	if mpde.AvailabilityStartTime != nil {
@@ -228,6 +231,7 @@ func (sc *StreamLooper) filterMpd(mpde *mpd.MPD, from, to time.Time) *mpd.MPD {
 	return mpde
 }
 
+// mergeMpd appends the periods from mpd2 into mpd1,
 func (sc *StreamLooper) mergeMpd(mpd1, mpd2 *mpd.MPD) *mpd.MPD {
 	mpd1.Period = append(mpd1.Period, mpd2.Period...)
 	return mpd1
@@ -237,8 +241,8 @@ func (sc *StreamLooper) mergeMpd(mpd1, mpd2 *mpd.MPD) *mpd.MPD {
 func (sc *StreamLooper) GetLooped(at time.Time) ([]byte, error) {
 
 	offset, shift, duration, start := sc.getLoopMeta(at)
-	sc.logger.Info().Msgf("Offset: %s TimeShift: %s LoopDuration: %s LoopStart:%s",
-		RoundToS(offset), RoundToS(shift), RoundToS(duration), start.Format(time.TimeOnly))
+	sc.logger.Info().Msgf("Offset: %s TimeShift: %s LoopDuration: %s LoopStart:%s At %s",
+		RoundToS(offset), RoundToS(shift), RoundToS(duration), start.Format(time.TimeOnly), at.Format(time.TimeOnly))
 	mpde, err := sc.loadHistoricMpd(start.Add(offset))
 	if err != nil {
 		return []byte{}, err
@@ -277,12 +281,27 @@ func (sc *StreamLooper) GetLooped(at time.Time) ([]byte, error) {
 
 // Handler serves manifests
 func (sc *StreamLooper) Handler(w http.ResponseWriter, r *http.Request) {
-	startat := time.Now()
 	/*
 		loopstart, _ := time.Parse(time.RFC3339, "2025-02-27T09:48:00Z")
 		startat= loopstart.Add(time.Now().Sub(sc.start))
 
 	*/
+	startat := time.Now()
+
+	// Parse time from query Args
+
+	ts := r.URL.Query()["to"]
+	if len(ts) > 0 {
+		t, err := strconv.Atoi(ts[0])
+		if err != nil {
+			sc.logger.Warn().Err(err).Msg("Parse time")
+		} else if t < 1e9 && t > 1e9 {
+			sc.logger.Warn().Msg("Implausable time offset, ignoring")
+		} else {
+			startat = startat.Add(-time.Duration(t) * time.Second)
+		}
+	}
+
 	buf, err := sc.GetLooped(startat)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
