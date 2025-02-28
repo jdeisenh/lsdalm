@@ -13,6 +13,22 @@ func TLP2Duration(pts uint64, timescale uint64) time.Duration {
 	return time.Duration(secs)*time.Second + time.Duration(nsecs)*time.Nanosecond
 }
 
+func Duration2TLP(duration time.Duration, timescale uint64) uint64 {
+	// Basically duration/time.Second*timescale
+	// Careful about overflow. timescale can be big We calculate in microseconds,
+	//
+	/*
+		if duration > time.Hour || timescale > 10000 {
+			return uint64(duration) / 1000 * timescale * 1000 / uint64(time.Second)
+		}
+		return uint64(duration) * timescale / uint64(time.Second)
+	*/
+	secs := duration / time.Second
+	nsecs := duration % time.Second * time.Nanosecond
+
+	return uint64(secs)*timescale + uint64(nsecs)*timescale/uint64(time.Second)
+}
+
 // Round duration to 100s of seconds
 func RoundTo(in time.Duration, to time.Duration) time.Duration {
 	return in / to * to
