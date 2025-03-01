@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/jdeisenh/lsdalm/pkg/streamgetter"
+	streamgetter "github.com/jdeisenh/lsdalm/pkg/lsdalm"
 	"github.com/rs/zerolog"
 )
 

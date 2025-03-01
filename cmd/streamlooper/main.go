@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/jdeisenh/lsdalm/pkg/streamgetter"
+	streamgetter "github.com/jdeisenh/lsdalm/pkg/lsdalm"
 	"github.com/rs/zerolog"
 )
 
