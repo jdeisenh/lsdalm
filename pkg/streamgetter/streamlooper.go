@@ -19,7 +19,7 @@ import (
 const (
 	segmentSize         = 3840 * time.Millisecond // 3.84s
 	timeShiftWindowSize = 25 * time.Second        //
-	LoopPointOffset     = 3 * time.Second
+	LoopPointOffset     = 10 * time.Second
 )
 
 // HistoryElement is metadata about a stored Manifest
@@ -56,7 +56,6 @@ func NewStreamLooper(dumpdir string, logger zerolog.Logger) (*StreamLooper, erro
 }
 
 // fillData reads add the manifests
-// Todo: detect gaps
 func (sc *StreamLooper) fillData() error {
 	files, err := os.ReadDir(sc.manifestDir)
 	if err != nil {
@@ -83,20 +82,24 @@ func (sc *StreamLooper) fillData() error {
 		sc.history = append(sc.history, HistoryElement{At: ctime, Name: f.Name()})
 	}
 	// Find last pts in both first and last manifest
-	first, err := sc.loadHistoricMpd(sc.history[0].At)
+	fs := sc.history[0].At
+	first, err := sc.loadHistoricMpd(fs)
 	if err != nil {
 		sc.logger.Warn().Err(err).Msg("Cannot load")
 	}
-	_, from, _ := sc.getPtsRange(first, "video/mp4")
-	last, err := sc.loadHistoricMpd(sc.history[len(sc.history)-1].At)
-	if err != nil {
-		sc.logger.Warn().Err(err).Msg("Cannot load")
-	}
-	_, to, _ := sc.getPtsRange(last, "video/mp4")
+	ff, fl, _ := sc.getPtsRange(first, "video/mp4")
 
-	sc.logger.Warn().Msgf("From %s to %s", shortT(from), shortT(to))
-	sc.historyStart = from
-	sc.historyEnd = to
+	ls := sc.history[len(sc.history)-1].At
+	last, err := sc.loadHistoricMpd(ls)
+	if err != nil {
+		sc.logger.Warn().Err(err).Msg("Cannot load")
+	}
+	lf, ll, _ := sc.getPtsRange(last, "video/mp4")
+
+	sc.logger.Warn().Msgf("Start %s %s-%s", shortT(fs), Round(fs.Sub(ff)), Round(fs.Sub(fl)))
+	sc.logger.Warn().Msgf("End %s %s-%s", shortT(ls), Round(ls.Sub(lf)), Round(ls.Sub(ll)))
+	sc.historyStart = fl
+	sc.historyEnd = ll
 
 	return nil
 }
@@ -141,6 +144,7 @@ func (sc *StreamLooper) FindHistory(want time.Time) *HistoryElement {
 func (sc *StreamLooper) getRecordingRange() (from, to time.Time) {
 	from = sc.history[0].At
 	to = sc.history[len(sc.history)-1].At
+
 	return
 }
 
@@ -155,9 +159,10 @@ func (sc *StreamLooper) getLoopMeta(at, now time.Time, maxDuration time.Duration
 
 	// Data from history buffer
 	// This is inexact, the last might not have all Segments downloaded
-	start, last := sc.getRecordingRange()
+	start, _ = sc.getRecordingRange()
 	// Round duration down to segmentSize
-	duration = last.Sub(start) / segmentSize * segmentSize
+	//duration = last.Sub(start) / segmentSize * segmentSize
+	duration = sc.historyEnd.Sub(sc.historyStart)
 	if duration > maxDuration {
 		duration = maxDuration
 	}
@@ -249,8 +254,8 @@ func (sc *StreamLooper) filterMpd(mpde *mpd.MPD, from, to time.Time) *mpd.MPD {
 				total, filtered := filterSegmentTemplate(
 					as.SegmentTemplate,
 					periodStart,
-					func(t time.Time, d time.Duration) bool {
-						r := t.After(from) && t.Add(d).Before(to)
+					func(st time.Time, sd time.Duration) bool {
+						r := !st.Before(from) && !st.After(to)
 						//sc.logger.Info().Msgf("Seg %s %s %v", shortT(t), Round(d), r)
 						return r
 					})
@@ -460,5 +465,5 @@ func (sc *StreamLooper) rewriteBaseUrl(base string, upstream *url.URL) string {
 
 // shortT returns a short string representation of the time
 func shortT(in time.Time) string {
-	return in.Format(time.TimeOnly)
+	return in.Format("15:04:05.00")
 }
