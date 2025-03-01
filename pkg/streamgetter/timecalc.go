@@ -3,7 +3,7 @@ package streamgetter
 import (
 	"time"
 
-	"github.com/unki2aut/go-xsd-types"
+	"github.com/jdeisenh/lsdalm/pkg/go-xsd-types"
 )
 
 // TLP2Duration converts timestamp with timescale to time.Duration

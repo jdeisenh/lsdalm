@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/jdeisenh/lsdalm/pkg/streamgetter"
 	"github.com/rs/zerolog"
-	"gitlab.com/nowtilus/streamgetter/pkg/streamgetter"
 )
 
 func main() {

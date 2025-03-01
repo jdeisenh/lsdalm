@@ -10,9 +10,8 @@ import (
 	"strconv"
 	"time"
 
-	//"gitlab.com/nowtilus/eventinjector/pkg/go-mpd"
+	"github.com/jdeisenh/lsdalm/pkg/go-mpd"
 	"github.com/rs/zerolog"
-	"github.com/unki2aut/go-mpd"
 )
 
 // Data about our stream. Hardcoded from testing, must be dynamic

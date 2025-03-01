@@ -7,9 +7,8 @@ import (
 	"strings"
 	"time"
 
-	//"gitlab.com/nowtilus/eventinjector/pkg/go-mpd"
+	"github.com/jdeisenh/lsdalm/pkg/go-mpd"
 	"github.com/rs/zerolog/log"
-	"github.com/unki2aut/go-mpd"
 )
 
 // GetTimeRange gets first and last time from SegmentTimeLine
