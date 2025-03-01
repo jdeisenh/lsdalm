@@ -16,9 +16,8 @@ import (
 
 // Data about our stream. Hardcoded from testing, must be dynamic
 const (
-	segmentSize         = 3840 * time.Millisecond // 3.84s
-	timeShiftWindowSize = 25 * time.Second        //
-	LoopPointOffset     = 10 * time.Second
+	timeShiftWindowSize = 25 * time.Second // timeshift buffer size. Should be taken from manifest or from samples
+	LoopPointOffset     = 10 * time.Second // move splicepoint back in time to be outside the live Delay
 )
 
 // HistoryElement is metadata about a stored Manifest
@@ -149,7 +148,7 @@ func (sc *StreamLooper) getRecordingRange() (from, to time.Time) {
 
 // Return loop metadata
 // for the position at, return offset (to recording), timeshift und loop duration
-func (sc *StreamLooper) getLoopMeta(at, now time.Time, maxDuration time.Duration) (offset, shift, duration time.Duration, start time.Time) {
+func (sc *StreamLooper) getLoopMeta(at, now time.Time, requestDuration time.Duration) (offset, shift, duration time.Duration, start time.Time) {
 
 	// Calculate the offset in the recording buffer and the timeshift (added to timestamps)
 	// Invariants:
@@ -159,12 +158,7 @@ func (sc *StreamLooper) getLoopMeta(at, now time.Time, maxDuration time.Duration
 	// Data from history buffer
 	// This is inexact, the last might not have all Segments downloaded
 	start, _ = sc.getRecordingRange()
-	// Round duration down to segmentSize
-	//duration = last.Sub(start) / segmentSize * segmentSize
 	duration = sc.historyEnd.Sub(sc.historyStart)
-	if duration > maxDuration {
-		duration = maxDuration
-	}
 
 	offset = at.Sub(start) % duration
 	shift = now.Add(-offset).Sub(start)
@@ -275,10 +269,9 @@ func (sc *StreamLooper) mergeMpd(mpd1, mpd2 *mpd.MPD) *mpd.MPD {
 }
 
 // GetLooped generates a Manifest by finding the manifest before now%duration
-func (sc *StreamLooper) GetLooped(at, now time.Time) ([]byte, error) {
+func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Duration) ([]byte, error) {
 
-	maxDuration := 10000 * time.Minute
-	offset, shift, duration, startOfRecording := sc.getLoopMeta(at, now, maxDuration)
+	offset, shift, duration, startOfRecording := sc.getLoopMeta(at, now, requestDuration)
 	sc.logger.Info().Msgf("Offset: %s TimeShift: %s LoopDuration: %s LoopStart:%s At %s",
 		RoundToS(offset), RoundToS(shift), RoundToS(duration), shortT(startOfRecording), shortT(at))
 	mpdCurrent, err := sc.loadHistoricMpd(startOfRecording.Add(offset))
@@ -393,22 +386,37 @@ func (sc *StreamLooper) Handler(w http.ResponseWriter, r *http.Request) {
 	*/
 	now := time.Now()
 	startat := now
+	var duration time.Duration
 
 	// Parse time from query Args
 
+	// to timeoffset
 	ts := r.URL.Query()["to"]
 	if len(ts) > 0 {
 		t, err := strconv.Atoi(ts[0])
 		if err != nil {
 			sc.logger.Warn().Err(err).Msg("Parse time")
-		} else if t < 1e9 && t > 1e9 {
+		} else if t < 0 && t > 1e6 {
 			sc.logger.Warn().Msg("Implausable time offset, ignoring")
 		} else {
 			startat = startat.Add(-time.Duration(t) * time.Second)
 		}
 	}
 
-	buf, err := sc.GetLooped(startat, now)
+	// ld loop duration
+	ld := r.URL.Query()["ld"]
+	if len(ld) > 0 {
+		t, err := strconv.Atoi(ld[0])
+		if err != nil {
+			sc.logger.Warn().Err(err).Msg("Parse time")
+		} else if t <= 0 && t > 1e5 {
+			sc.logger.Warn().Msg("Implausable duration, ignoring")
+		} else {
+			duration = time.Duration(t) * time.Second
+		}
+	}
+
+	buf, err := sc.GetLooped(startat, now, duration)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
