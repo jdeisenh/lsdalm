@@ -95,8 +95,8 @@ func (sc *StreamLooper) fillData() error {
 	}
 	lf, ll, _ := sc.getPtsRange(last, "video/mp4")
 
-	sc.logger.Warn().Msgf("Start %s %s-%s", shortT(fs), Round(fs.Sub(ff)), Round(fs.Sub(fl)))
-	sc.logger.Warn().Msgf("End %s %s-%s", shortT(ls), Round(ls.Sub(lf)), Round(ls.Sub(ll)))
+	sc.logger.Debug().Msgf("Start %s %s-%s", shortT(fs), Round(fs.Sub(ff)), Round(fs.Sub(fl)))
+	sc.logger.Debug().Msgf("End %s %s-%s", shortT(ls), Round(ls.Sub(lf)), Round(ls.Sub(ll)))
 	sc.historyStart = fl
 	sc.historyEnd = ll
 
@@ -240,15 +240,11 @@ func (sc *StreamLooper) filterMpd(mpde *mpd.MPD, from, to time.Time) *mpd.MPD {
 		periodStart := ast.Add(start)
 		if period.AdaptationSets != nil {
 			// Could be under Representation
-			first := true
-			for asidx, as := range period.AdaptationSets {
+			for _, as := range period.AdaptationSets {
 				if as.SegmentTemplate == nil || as.SegmentTemplate.SegmentTimeline == nil {
 					continue
 				}
-				buf_from, buf_to := sumSegmentTemplate(as.SegmentTemplate, periodStart)
-				if false {
-					sc.logger.Info().Msgf("Timestamps before %d: %s-%s", asidx, shortT(buf_from), shortT(buf_to))
-				}
+				//buf_from, buf_to := sumSegmentTemplate(as.SegmentTemplate, periodStart)
 				// Filter the SegmentTimeline for timestamps
 				total, filtered := filterSegmentTemplate(
 					as.SegmentTemplate,
@@ -258,12 +254,7 @@ func (sc *StreamLooper) filterMpd(mpde *mpd.MPD, from, to time.Time) *mpd.MPD {
 						//sc.logger.Info().Msgf("Seg %s %s %v", shortT(t), Round(d), r)
 						return r
 					})
-				buf_from, buf_to = sumSegmentTemplate(as.SegmentTemplate, periodStart)
-				if first {
-					//sc.logger.Info().Msgf("Total %d Filtered %d", total, filtered)
-					sc.logger.Info().Msgf("Timestamp After %d: %s-%s", asidx, shortT(buf_from), shortT(buf_to))
-				}
-				first = false
+				//buf_from, buf_to = sumSegmentTemplate(as.SegmentTemplate, periodStart)
 				retained += total - filtered
 			}
 		}
@@ -309,7 +300,7 @@ func (sc *StreamLooper) GetLooped(at, now time.Time) ([]byte, error) {
 		} else {
 			sc.AdjustMpd(mpdPrevious, shift-duration) // add Below
 			loopPoint := startOfRecording.Add(shift).Add(-LoopPointOffset)
-			sc.logger.Info().Msgf("Loop-point: %s", shortT(loopPoint))
+			//sc.logger.Info().Msgf("Loop-point: %s", shortT(loopPoint))
 
 			// Cut segments to become non-overlapping
 			mpdPrevious = sc.filterMpd(mpdPrevious, now.Add(-timeShiftWindowSize).Add(-LoopPointOffset), loopPoint)
@@ -324,7 +315,7 @@ func (sc *StreamLooper) GetLooped(at, now time.Time) ([]byte, error) {
 		} else if mpdCurrent == nil {
 			mpdCurrent = mpdPrevious
 		} else {
-			sc.logger.Info().Msg("Drop period")
+			sc.logger.Debug().Msg("Drop period")
 		}
 		// Get mpd from the end of the period
 		// Shift one period less
