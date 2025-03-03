@@ -339,17 +339,18 @@ func (sc *StreamLooper) getPtsRange(mpde *mpd.MPD, mimetype string) (time.Time, 
 
 	var earliest, latest time.Time
 
-	for _, period := range mpde.Period {
+	for periodId, period := range mpde.Period {
 		for _, as := range period.AdaptationSets {
 
 			// If there is no segmentTimeline, skip it
 			if as.SegmentTemplate == nil || as.SegmentTemplate.SegmentTimeline == nil || len(as.SegmentTemplate.SegmentTimeline.S) == 0 {
 				continue
 			}
-			if as.MimeType != mimetype {
-				continue
-			}
-
+			/*
+				if as.MimeType != mimetype {
+					continue
+				}
+			*/
 			// Calculate period start
 			var start time.Duration
 			if period.Start != nil {
@@ -365,6 +366,10 @@ func (sc *StreamLooper) getPtsRange(mpde *mpd.MPD, mimetype string) (time.Time, 
 						break
 					}
 				}
+			}
+			sc.logger.Info().Msgf("Period %d As %s From %s to %s", periodId, as.MimeType, shortT(from), shortT(to))
+			if as.MimeType != mimetype {
+				continue
 			}
 			if earliest.IsZero() || from.Before(earliest) {
 				earliest = from

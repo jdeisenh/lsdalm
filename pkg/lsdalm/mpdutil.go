@@ -237,7 +237,14 @@ func reframePeriods(mpde *mpd.MPD, id string, newStart time.Time) {
 		}
 
 		// Shift EventStreams
+		resultAs := period.AdaptationSets[:0]
 		for _, as := range period.AdaptationSets {
+			if !(as.MimeType == "audio/mp4" && EmptyIfNil(as.Codecs) == "mp4a.40.2") &&
+				!(as.MimeType == "video/mp4") {
+				// Hack: only keep important AdaptationSets, that also are aligned
+				continue
+			}
+
 			if st := as.SegmentTemplate; st != nil {
 				shiftPto(st, shiftValue)
 			} else {
@@ -247,7 +254,9 @@ func reframePeriods(mpde *mpd.MPD, id string, newStart time.Time) {
 					}
 				}
 			}
+			resultAs = append(resultAs, as)
 		}
+		period.AdaptationSets = resultAs
 		// Shift Eventstreams
 		for _, es := range period.EventStream {
 			timescale := uint64(1)
