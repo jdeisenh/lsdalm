@@ -236,6 +236,7 @@ func reframePeriods(mpde *mpd.MPD, id string, newStart time.Time) {
 			*period.ID = id
 		}
 
+		// Shift EventStreams
 		for _, as := range period.AdaptationSets {
 			if st := as.SegmentTemplate; st != nil {
 				shiftPto(st, shiftValue)
@@ -246,6 +247,21 @@ func reframePeriods(mpde *mpd.MPD, id string, newStart time.Time) {
 					}
 				}
 			}
+		}
+		// Shift Eventstreams
+		for _, es := range period.EventStream {
+			timescale := uint64(1)
+			if es.Timescale != nil {
+				timescale = *es.Timescale
+			}
+			pto := uint64(0)
+			if lpto := es.PresentationTimeOffset; lpto != nil {
+				pto = *lpto
+			}
+			pto = uint64(int64(pto) + Duration2TLP(shiftValue, timescale))
+			// Write back
+			es.PresentationTimeOffset = &pto
+
 		}
 	}
 
