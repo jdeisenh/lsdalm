@@ -18,7 +18,10 @@ import (
 const (
 	ManifestPath   = "manifests"
 	ManifestFormat = "manifest-2006-01-02T15:04:05Z.mpd"
-	FetchQueueSize = 2000 // Max number of outstanding requests in queue
+	FetchQueueSize = 2000                           // Max number of outstanding requests in queue
+	maxGapLog      = 5 * time.Millisecond           // Warn above this gap length
+	dateShortFmt   = "15:04:05.00"                  // Used in logging dates
+	schemeScteXml  = "urn:scte:scte35:2014:xml+bin" // The one scte scheme we support right now
 )
 
 type StreamChecker struct {
@@ -35,7 +38,8 @@ type StreamChecker struct {
 
 	logger zerolog.Logger
 
-	// statistics
+	// State
+
 }
 
 func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, dumpMedia bool, logger zerolog.Logger) (*StreamChecker, error) {
@@ -60,20 +64,6 @@ func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, du
 		return nil, errors.New("Cannot create directory")
 	}
 	return st, nil
-}
-
-// rewriteBaseUrl will return a URL concatenating upstream with base
-func (sc *StreamChecker) rewriteBaseUrl(base string, upstream *url.URL) string {
-	// Check for relative URL
-	ur, e := url.Parse(base)
-	if e != nil {
-		sc.logger.Warn().Err(e).Msg("URL parsing")
-		return base
-	}
-	if ur.IsAbs() {
-		return base
-	}
-	return upstream.ResolveReference(ur).String()
 }
 
 // fetchAndStoreSegment queues an URL for fetching
@@ -201,7 +191,19 @@ func (sc *StreamChecker) fetchAndStoreManifest() error {
 	return err
 }
 
-const dateShortFmt = "15:04:05.00"
+func ZeroIfNil(in *uint64) uint64 {
+	if in == nil {
+		return 0
+	}
+	return *in
+}
+
+func EmptyIfNil(in *string) string {
+	if in == nil {
+		return ""
+	}
+	return *in
+}
 
 // Iterate through all periods, representation, segmentTimeline and
 // write statistics about timing
@@ -216,6 +218,34 @@ func (sc *StreamChecker) walkMpd(mpde *mpd.MPD) error {
 	if mpde.AvailabilityStartTime != nil {
 		ast = time.Time(*mpde.AvailabilityStartTime)
 	}
+	// Log events
+	for _, period := range mpde.Period {
+		// Calculate period start
+		var start time.Duration
+		if period.Start != nil {
+			startmed, _ := (*period.Start).ToNanoseconds()
+			start = time.Duration(startmed)
+		}
+		periodStart := ast.Add(start)
+		for _, eventStream := range period.EventStream {
+			schemeIdUri := EmptyIfNil(eventStream.SchemeIdUri)
+			timescale := ZeroIfNil(eventStream.Timescale)
+			pto := ZeroIfNil(eventStream.PresentationTimeOffset)
+			if schemeIdUri != schemeScteXml {
+				continue
+			}
+
+			//sc.logger.Info().Msgf("EventStream: %s %d %d %+v", schemeIdUri, timescale, pto, eventStream.Event)
+			for _, event := range eventStream.Event {
+				duration := ZeroIfNil(event.Duration)
+				pt := ZeroIfNil(event.PresentationTime)
+				// signal, content
+				sc.logger.Info().Msgf("SCTE35 Id: %d Duration: %s Time %s", event.Id, TLP2Duration(int64(duration), timescale), shortT(periodStart.Add(TLP2Duration(int64(pt-pto), timescale))))
+			}
+		}
+		_ = periodStart
+	}
+
 	// TODO: Choose best period for adaptationSet Reference
 	referencePeriod := mpde.Period[0]
 	// Choose one with Period-AdaptationSet->SegmentTemplate, which in our case is
@@ -286,7 +316,7 @@ ASloop:
 					codecs = "/" + *asRef.Codecs
 				}
 				msg = fmt.Sprintf("%30s: %8s", asRef.MimeType+codecs, RoundTo(now.Sub(from), time.Second))
-			} else if gap := from.Sub(theGap); gap > 10*time.Millisecond || gap < -10*time.Millisecond {
+			} else if gap := from.Sub(theGap); gap > maxGapLog || gap < -maxGapLog {
 				msg += fmt.Sprintf("GAP: %s", Round(gap))
 			}
 
@@ -297,7 +327,7 @@ ASloop:
 			}
 			theGap = to
 		}
-		sc.logger.Info().Msg(msg)
+		sc.logger.Info().Msg(msg) // Write the assembled status line
 	}
 	return nil
 }
