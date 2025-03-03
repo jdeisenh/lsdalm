@@ -18,6 +18,7 @@ import (
 const (
 	timeShiftWindowSize = 25 * time.Second // timeshift buffer size. Should be taken from manifest or from samples
 	LoopPointOffset     = 10 * time.Second // move splicepoint back in time to be outside the live Delay
+	maxMpdGap           = 30 * time.Second // maximum gap between mpd updates
 )
 
 // HistoryElement is metadata about a stored Manifest
@@ -26,6 +27,23 @@ type HistoryElement struct {
 	Name string
 }
 
+type Element struct {
+	d, r int64
+}
+
+type AdaptationSet struct {
+	elements   []Element
+	start, end int64
+}
+
+func NewAdaptationSet() *AdaptationSet {
+	return &AdaptationSet{
+		elements: make([]Element, 0, 100),
+	}
+}
+
+var noncont = errors.New("Not in Sequence")
+
 type StreamLooper struct {
 	dumpdir     string
 	manifestDir string
@@ -33,6 +51,9 @@ type StreamLooper struct {
 	logger                   zerolog.Logger
 	history                  []HistoryElement
 	historyStart, historyEnd time.Time
+
+	originalMpd *mpd.MPD
+	Segments    []*AdaptationSet
 
 	// statistics
 }
@@ -44,6 +65,7 @@ func NewStreamLooper(dumpdir string, logger zerolog.Logger) (*StreamLooper, erro
 		manifestDir: path.Join(dumpdir, ManifestPath),
 		logger:      logger,
 		history:     make([]HistoryElement, 0, 1000),
+		Segments:    make([]*AdaptationSet, 0, 5),
 	}
 	st.fillData()
 	if len(st.history) < 10 {
@@ -53,7 +75,7 @@ func NewStreamLooper(dumpdir string, logger zerolog.Logger) (*StreamLooper, erro
 	return st, nil
 }
 
-// fillData reads add the manifests
+// fillData reads and adds stored manifests
 func (sc *StreamLooper) fillData() error {
 	files, err := os.ReadDir(sc.manifestDir)
 	if err != nil {
@@ -71,13 +93,24 @@ func (sc *StreamLooper) fillData() error {
 			sc.logger.Warn().Err(err).Msg("Parse String")
 			continue
 		}
-		if !lasttime.IsZero() && (ctime.Sub(lasttime) > time.Second*30) {
+		if !lasttime.IsZero() && (ctime.Sub(lasttime) > maxMpdGap) {
 			sc.logger.Error().Msgf("Too large a gap between %s and %s, dropping",
 				lasttime.Format(time.TimeOnly), ctime.Format(time.TimeOnly))
 			sc.history = sc.history[:0]
 		}
-
-		sc.history = append(sc.history, HistoryElement{At: ctime, Name: f.Name()})
+		newOne := HistoryElement{At: ctime, Name: f.Name()}
+		sc.history = append(sc.history, newOne)
+		got, err := sc.loadHistoricMpd(newOne.At)
+		if err != nil {
+			sc.logger.Error().Err(err).Msg("Load manifest")
+		}
+		err = sc.AddMpdToHistory(got)
+		if err != nil {
+			sc.logger.Error().Err(err).Msg("Add manifest")
+		}
+	}
+	for _, as := range sc.Segments {
+		sc.logger.Info().Msgf("%d: %d-%d", len(as.elements), as.start, as.end)
 	}
 	// Find last pts in both first and last manifest
 	fs := sc.history[0].At
@@ -125,6 +158,42 @@ func findSub(hist []HistoryElement, want time.Time) *HistoryElement {
 	} else {
 		return findSub(hist[pivot:], want)
 	}
+}
+
+func (sc *StreamLooper) AddMpdToHistory(mpde *mpd.MPD) error {
+
+	if len(mpde.Period) == 0 {
+		return errors.New("No periods")
+	}
+	if len(mpde.Period) > 1 {
+		return errors.New("Multiperiod not supported")
+	}
+	for _, p := range mpde.Period {
+		for asi, as := range p.AdaptationSets {
+			var tas *AdaptationSet
+			if asi >= len(sc.Segments) {
+				sc.Segments = append(sc.Segments, NewAdaptationSet())
+			}
+			tas = sc.Segments[asi]
+			if st := as.SegmentTemplate; st != nil {
+				if stl := st.SegmentTimeline; stl != nil {
+					for t, d := range All(stl) {
+						//sc.logger.Debug().Msgf("Add %d %d", t, d)
+						e := tas.Add(int64(t), int64(d), 0)
+						if e != nil {
+							return e
+						}
+					}
+				}
+			}
+			// Todo: Template under Adaptation
+		}
+	}
+	if sc.originalMpd == nil {
+		sc.originalMpd = mpde
+	}
+	return nil
+
 }
 
 // FindHistory returns the newest element from history older than 'want'
@@ -268,8 +337,64 @@ func (sc *StreamLooper) mergeMpd(mpd1, mpd2 *mpd.MPD) *mpd.MPD {
 	return mpd1
 }
 
+func (sc *StreamLooper) BuildMpd() *mpd.MPD {
+	mpde := sc.originalMpd
+	for _, period := range mpde.Period {
+		if len(period.AdaptationSets) == 0 {
+			continue
+		}
+		// Calculate period start
+		var start time.Duration
+		if period.Start != nil {
+			startmed, _ := (*period.Start).ToNanoseconds()
+			start = time.Duration(startmed)
+		}
+		_ = start
+		//periodStart := ast.Add(start)
+		if period.AdaptationSets == nil {
+			continue
+		}
+		for asi, as := range period.AdaptationSets {
+			if as.SegmentTemplate == nil || as.SegmentTemplate.SegmentTimeline == nil {
+				continue
+			}
+			stl := as.SegmentTemplate.SegmentTimeline
+			stl.S = stl.S[:0]
+			elements := sc.Segments[asi]
+			start := elements.start
+			for si, s := range elements.elements {
+				t := uint64(0)
+				if si == 0 {
+					t = uint64(start)
+				}
+				AppendR(stl, t, uint64(s.d), int64(s.r))
+				start += s.d * (s.r + 1)
+			}
+
+		}
+		//sc.logger.Info().Msgf("Period %d start: %s", periodIdx, periodStart)
+
+	}
+	return mpde
+}
+
 // GetLooped generates a Manifest by finding the manifest before now%duration
 func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Duration) ([]byte, error) {
+
+	offset, shift, duration, startOfRecording := sc.getLoopMeta(at, now, requestDuration)
+	sc.logger.Info().Msgf("Offset: %s TimeShift: %s LoopDuration: %s LoopStart:%s At %s",
+		RoundToS(offset), RoundToS(shift), RoundToS(duration), shortT(startOfRecording), shortT(at))
+	mpdCurrent := sc.BuildMpd()
+	// re-encode
+	afterEncode, err := mpdCurrent.Encode()
+	if err != nil {
+		return nil, err
+	}
+	return afterEncode, nil
+}
+
+// GetLooped generates a Manifest by finding the manifest before now%duration
+func (sc *StreamLooper) GetLooped_old(at, now time.Time, requestDuration time.Duration) ([]byte, error) {
 
 	offset, shift, duration, startOfRecording := sc.getLoopMeta(at, now, requestDuration)
 	sc.logger.Info().Msgf("Offset: %s TimeShift: %s LoopDuration: %s LoopStart:%s At %s",
@@ -469,4 +594,26 @@ func (sc *StreamLooper) rewriteBaseUrl(base string, upstream *url.URL) string {
 // shortT returns a short string representation of the time
 func shortT(in time.Time) string {
 	return in.Format("15:04:05.00")
+}
+
+func (as *AdaptationSet) Add(t, d, r int64) error {
+
+	last := len(as.elements) - 1
+	if last < 0 {
+		as.elements = make([]Element, 0, 1000)
+		as.start, as.end = t, t
+	}
+	if t > as.end {
+		// We ignore smaller ones, not checking if they already exist
+		return noncont
+	}
+	if last < 0 || as.elements[last].d != d {
+		// New element
+		as.elements = append(as.elements, Element{d: d, r: r})
+	} else {
+		n := as.elements[last]
+		as.elements[last] = Element{n.d, n.r + r + 1}
+	}
+	as.end += d * (r + 1)
+	return nil
 }

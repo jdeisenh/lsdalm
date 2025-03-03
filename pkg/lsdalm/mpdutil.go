@@ -67,6 +67,36 @@ func Append(st *mpd.SegmentTimeline, t, d uint64) {
 		} else {
 			*last.R++
 		}
+	} else {
+		st.S = append(st.S, &mpd.SegmentTimelineS{T: &t, D: d})
+	}
+}
+
+// AppendR adds a segemnt to a SegmentTimeline
+// We do not check the time for gaps, this would require re-counting on every insert
+func AppendR(st *mpd.SegmentTimeline, t, d uint64, r int64) {
+	var rp *int64
+	var tp *uint64
+	if r != 0 {
+		rp = &r
+	}
+	if t != 0 {
+		tp = &t
+	}
+	if len(st.S) == 0 {
+		st.S = append(st.S, &mpd.SegmentTimelineS{T: tp, D: d, R: rp})
+		return
+	}
+	last := st.S[len(st.S)-1]
+	if last.D == d {
+		if last.R == nil {
+			r := int64(r + 1)
+			last.R = &r
+		} else {
+			*last.R += r + 1
+		}
+	} else {
+		st.S = append(st.S, &mpd.SegmentTimelineS{T: tp, D: d, R: rp})
 	}
 }
 
