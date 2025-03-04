@@ -1,7 +1,6 @@
 package streamgetter
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -21,43 +20,27 @@ const (
 	segmentSize         = 1920 * time.Millisecond // must be got from stream
 )
 
-var noncont = errors.New("Not in sequence")
-
 type StreamLooper struct {
-	dumpdir     string
-	manifestDir string
+	dumpdir string
 
 	logger zerolog.Logger
 
-	// Map timestamps to mpd files
-	history []HistoryElement
-
-	originalMpd *mpd.MPD
-
-	// All the samples we have
-	Segments []*AdaptationSet
-
-	// All EventStreams
-	EventStreamMap map[string]*mpd.EventStream
-
+	recording *Recording
 	// statistics
 }
 
 func NewStreamLooper(dumpdir string, logger zerolog.Logger) (*StreamLooper, error) {
 
 	st := &StreamLooper{
-		dumpdir:        dumpdir,
-		manifestDir:    path.Join(dumpdir, ManifestPath),
-		logger:         logger,
-		history:        make([]HistoryElement, 0, 1000),
-		Segments:       make([]*AdaptationSet, 0, 5),
-		EventStreamMap: make(map[string]*mpd.EventStream),
+		dumpdir:   dumpdir,
+		logger:    logger,
+		recording: NewRecording(path.Join(dumpdir, ManifestPath)),
 	}
-	st.fillData()
-	if len(st.history) < 10 {
+	st.recording.fillData(st.logger)
+	if len(st.recording.history) < 10 {
 		return nil, fmt.Errorf("Not enough manifests")
 	}
-	st.ShowStats()
+	st.recording.ShowStats(st.logger)
 	return st, nil
 }
 
@@ -97,7 +80,7 @@ func (sc *StreamLooper) mergeMpd(mpd1, mpd2 *mpd.MPD) *mpd.MPD {
 }
 
 func (sc *StreamLooper) BuildMpd(shift time.Duration, id string, newstart, from, to time.Time) *mpd.MPD {
-	mpde := sc.originalMpd
+	mpde := sc.recording.originalMpd
 	outMpd := new(mpd.MPD)
 	*outMpd = *mpde // Copy mpd
 
@@ -148,7 +131,7 @@ func (sc *StreamLooper) BuildMpd(shift time.Duration, id string, newstart, from,
 		*nstl = *nst.SegmentTimeline
 
 		nstl.S = nstl.S[:0]
-		elements := sc.Segments[asi]
+		elements := sc.recording.Segments[asi]
 		shiftPto(nst, shiftValue)
 		//startrt := newstart.Add(-TLP2Duration(int64(ZeroIfNil(nst.PresentationTimeOffset)), ZeroIfNil(nst.Timescale)))
 		start := elements.start
@@ -180,7 +163,7 @@ func (sc *StreamLooper) BuildMpd(shift time.Duration, id string, newstart, from,
 
 	// Add Events
 	np.EventStream = np.EventStream[:0]
-	for _, ev := range sc.EventStreamMap {
+	for _, ev := range sc.recording.EventStreamMap {
 		// Append all for all ranges: Todo: map offset, duration
 		evs := new(mpd.EventStream)
 		*evs = *ev
@@ -220,7 +203,7 @@ func (sc *StreamLooper) BuildMpd(shift time.Duration, id string, newstart, from,
 // GetLooped generates a Manifest by finding the manifest before now%duration
 func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Duration) ([]byte, error) {
 
-	offset, shift, duration, startOfRecording := sc.getLoopMeta(at, now, requestDuration)
+	offset, shift, duration, startOfRecording := sc.recording.getLoopMeta(at, now, requestDuration)
 	sc.logger.Info().Msgf("Offset: %s TimeShift: %s LoopDuration: %s LoopStart:%s At %s",
 		RoundToS(offset), RoundToS(shift), RoundToS(duration), shortT(startOfRecording), shortT(at))
 
@@ -263,10 +246,10 @@ func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Durati
 // GetLooped generates a Manifest by finding the manifest before now%duration
 func (sc *StreamLooper) GetPlayback(at, now time.Time, requestDuration time.Duration) ([]byte, error) {
 
-	offset, shift, duration, startOfRecording := sc.getLoopMeta(at, now, requestDuration)
+	offset, shift, duration, startOfRecording := sc.recording.getLoopMeta(at, now, requestDuration)
 	sc.logger.Info().Msgf("Offset: %s TimeShift: %s LoopDuration: %s LoopStart:%s At %s",
 		RoundToS(offset), RoundToS(shift), RoundToS(duration), shortT(startOfRecording), shortT(at))
-	mpdCurrent, err := sc.loadHistoricMpd(startOfRecording.Add(offset))
+	mpdCurrent, err := sc.recording.loadHistoricMpd(startOfRecording.Add(offset))
 	if err != nil {
 		return []byte{}, err
 	}
@@ -335,20 +318,6 @@ func (sc *StreamLooper) FileHandler(w http.ResponseWriter, r *http.Request) {
 	filepath := path.Join(sc.dumpdir, r.URL.Path)
 	sc.logger.Trace().Str("path", filepath).Msg("Access")
 	http.ServeFile(w, r, filepath)
-}
-
-func (sc *StreamLooper) ShowStats() {
-	if len(sc.history) > 0 {
-		first := sc.history[0].At
-		last := sc.history[len(sc.history)-1].At
-		sc.logger.Info().Msgf("Recorded %d manifests from %s to %s (%s)",
-			len(sc.history),
-			first.Format(time.TimeOnly),
-			last.Format(time.TimeOnly),
-			last.Sub(first),
-		)
-	}
-
 }
 
 // rewriteBaseUrl will return a URL concatenating upstream with base

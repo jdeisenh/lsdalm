@@ -7,12 +7,27 @@ import (
 	"time"
 
 	"github.com/jdeisenh/lsdalm/pkg/go-mpd"
+	"github.com/rs/zerolog"
 )
+
+type Recording struct {
+	manifestDir string
+	// Map timestamps to mpd files
+	history []HistoryElement
+
+	originalMpd *mpd.MPD
+
+	// All the samples we have
+	Segments []*AdaptationSet
+
+	// All EventStreams
+	EventStreamMap map[string]*mpd.EventStream
+}
 
 // HistoryElement is metadata about a stored Manifest
 type HistoryElement struct {
-	At   time.Time
-	Name string
+	At       time.Time
+	Filename string
 }
 
 type Element struct {
@@ -30,11 +45,21 @@ func NewAdaptationSet() *AdaptationSet {
 	}
 }
 
+func NewRecording(manifestDir string) *Recording {
+
+	return &Recording{
+		manifestDir:    manifestDir,
+		history:        make([]HistoryElement, 0, 1000),
+		Segments:       make([]*AdaptationSet, 0, 5),
+		EventStreamMap: make(map[string]*mpd.EventStream),
+	}
+}
+
 // fillData reads and adds stored manifests
-func (sc *StreamLooper) fillData() error {
-	files, err := os.ReadDir(sc.manifestDir)
+func (re *Recording) fillData(logger zerolog.Logger) error {
+	files, err := os.ReadDir(re.manifestDir)
 	if err != nil {
-		sc.logger.Error().Err(err).Msg("Scan directories")
+		logger.Error().Err(err).Msg("Scan directories")
 		return err
 	}
 	var lasttime time.Time
@@ -42,37 +67,37 @@ func (sc *StreamLooper) fillData() error {
 		if f.IsDir() {
 			continue
 		}
-		sc.logger.Trace().Msg(f.Name())
+		logger.Trace().Msg(f.Name())
 		ctime, err := time.Parse(ManifestFormat, f.Name())
 		if err != nil {
-			sc.logger.Warn().Err(err).Msg("Parse String")
+			logger.Warn().Err(err).Msg("Parse String")
 			continue
 		}
 		if !lasttime.IsZero() && (ctime.Sub(lasttime) > maxMpdGap) {
-			sc.logger.Error().Msgf("Too large a gap between %s and %s, dropping",
+			logger.Error().Msgf("Too large a gap between %s and %s, dropping",
 				lasttime.Format(time.TimeOnly), ctime.Format(time.TimeOnly))
-			sc.history = sc.history[:0]
+			re.history = re.history[:0]
 		}
-		newOne := HistoryElement{At: ctime, Name: f.Name()}
-		sc.history = append(sc.history, newOne)
-		got, err := sc.loadHistoricMpd(newOne.At)
+		newOne := HistoryElement{At: ctime, Filename: f.Name()}
+		re.history = append(re.history, newOne)
+		got, err := re.loadHistoricMpd(newOne.At)
 		if err != nil {
-			sc.logger.Error().Err(err).Msg("Load manifest")
+			logger.Error().Err(err).Msg("Load manifest")
 		}
-		err = sc.AddMpdToHistory(got)
+		err = re.AddMpdToHistory(got)
 		if err != nil {
-			sc.logger.Error().Err(err).Msg("Add manifest")
+			logger.Error().Err(err).Msg("Add manifest")
 		}
 	}
 
-	for k, as := range sc.Segments {
-		ras := sc.originalMpd.Period[0].AdaptationSets[k]
+	for k, as := range re.Segments {
+		ras := re.originalMpd.Period[0].AdaptationSets[k]
 
-		sc.logger.Info().Msgf("%d: %s %d-%d Duration %d", len(as.elements), ras.MimeType, as.start, as.end, (as.end-as.start)*1000/int64(*ras.SegmentTemplate.Timescale))
+		logger.Info().Msgf("%d: %s %d-%d Duration %d", len(as.elements), ras.MimeType, as.start, as.end, (as.end-as.start)*1000/int64(*ras.SegmentTemplate.Timescale))
 	}
 
-	for sId, elem := range sc.EventStreamMap {
-		sc.logger.Info().Msgf("Events: %s: %+v", sId, len(elem.Event))
+	for sId, elem := range re.EventStreamMap {
+		logger.Info().Msgf("Events: %s: %+v", sId, len(elem.Event))
 	}
 
 	return nil
@@ -103,7 +128,7 @@ func findSub(hist []HistoryElement, want time.Time) *HistoryElement {
 	}
 }
 
-func (sc *StreamLooper) AddMpdToHistory(mpde *mpd.MPD) error {
+func (re *Recording) AddMpdToHistory(mpde *mpd.MPD) error {
 
 	if len(mpde.Period) == 0 {
 		return errors.New("No periods")
@@ -114,10 +139,10 @@ func (sc *StreamLooper) AddMpdToHistory(mpde *mpd.MPD) error {
 	for _, p := range mpde.Period {
 		for asi, as := range p.AdaptationSets {
 			var tas *AdaptationSet
-			if asi >= len(sc.Segments) {
-				sc.Segments = append(sc.Segments, NewAdaptationSet())
+			if asi >= len(re.Segments) {
+				re.Segments = append(re.Segments, NewAdaptationSet())
 			}
-			tas = sc.Segments[asi]
+			tas = re.Segments[asi]
 			if st := as.SegmentTemplate; st != nil {
 				if stl := st.SegmentTimeline; stl != nil {
 					for t, d := range All(stl) {
@@ -138,10 +163,10 @@ func (sc *StreamLooper) AddMpdToHistory(mpde *mpd.MPD) error {
 			}
 			sId := *ev.SchemeIdUri
 			// Look up by scheme
-			have, ok := sc.EventStreamMap[sId]
+			have, ok := re.EventStreamMap[sId]
 			if !ok {
 				ev.Event = ev.Event[:0]
-				sc.EventStreamMap[sId] = ev
+				re.EventStreamMap[sId] = ev
 				continue
 			}
 		inloop:
@@ -150,11 +175,11 @@ func (sc *StreamLooper) AddMpdToHistory(mpde *mpd.MPD) error {
 				// Compare to the ones already there
 				for _, x := range have.Event {
 					if x.Id == in.Id && ZeroIfNil(x.PresentationTime) == ZeroIfNil(in.PresentationTime) {
-						sc.logger.Trace().Msgf("Found: %d@%d", in.Id, in.PresentationTime)
+						//logger.Trace().Msgf("Found: %d@%d", in.Id, in.PresentationTime)
 						continue inloop
 					}
 				}
-				sc.logger.Info().Msgf("Add Events %s: %d@%d", sId, in.Id, in.PresentationTime)
+				//logger.Info().Msgf("Add Events %s: %d@%d", sId, in.Id, in.PresentationTime)
 				// Append Events if not there
 				in.Content = "" // Clean up cruft
 				have.Event = append(have.Event, in)
@@ -162,34 +187,34 @@ func (sc *StreamLooper) AddMpdToHistory(mpde *mpd.MPD) error {
 
 		}
 	}
-	if sc.originalMpd == nil {
-		sc.originalMpd = mpde
+	if re.originalMpd == nil {
+		re.originalMpd = mpde
 	}
 	return nil
 
 }
 
 // FindHistory returns the newest element from history older than 'want'
-func (sc *StreamLooper) FindHistory(want time.Time) *HistoryElement {
+func (re *Recording) FindHistory(want time.Time) *HistoryElement {
 
-	ret := findSub(sc.history, want)
+	ret := findSub(re.history, want)
 	if ret == nil {
 		return nil
 	}
 	acopy := *ret
-	acopy.Name = path.Join(sc.manifestDir, ret.Name)
+	acopy.Filename = path.Join(re.manifestDir, ret.Filename)
 	return &acopy
 }
 
-func (sc *StreamLooper) getRecordingRange() (from, to time.Time) {
-	from = sc.history[0].At
-	to = sc.history[len(sc.history)-1].At
+func (re *Recording) getRecordingRange() (from, to time.Time) {
+	from = re.history[0].At
+	to = re.history[len(re.history)-1].At
 	return
 }
 
 // Return loop metadata
 // for the position at, return offset (to recording), timeshift und loop duration
-func (sc *StreamLooper) getLoopMeta(at, now time.Time, requestDuration time.Duration) (offset, shift, duration time.Duration, start time.Time) {
+func (re *Recording) getLoopMeta(at, now time.Time, requestDuration time.Duration) (offset, shift, duration time.Duration, start time.Time) {
 
 	// Calculate the offset in the recording buffer and the timeshift (added to timestamps)
 	// Invariants:
@@ -199,8 +224,8 @@ func (sc *StreamLooper) getLoopMeta(at, now time.Time, requestDuration time.Dura
 	// Data from history buffer
 	// This is inexact, the last might not have all Segments downloaded
 	var end time.Time
-	start, end = sc.getRecordingRange()
-	duration = end.Sub(start) / segmentSize * segmentSize //sc.historyEnd.Sub(sc.historyStart)
+	start, end = re.getRecordingRange()
+	duration = end.Sub(start) / segmentSize * segmentSize
 
 	offset = at.Sub(start) % duration
 	shift = now.Add(-offset).Sub(start)
@@ -209,14 +234,14 @@ func (sc *StreamLooper) getLoopMeta(at, now time.Time, requestDuration time.Dura
 }
 
 // Find a manifest at time 'at'
-func (sc *StreamLooper) loadHistoricMpd(at time.Time) (*mpd.MPD, error) {
+func (re *Recording) loadHistoricMpd(at time.Time) (*mpd.MPD, error) {
 
-	sourceElement := sc.FindHistory(at)
+	sourceElement := re.FindHistory(at)
 
 	if sourceElement == nil {
 		return nil, errors.New("No source found")
 	}
-	buf, err := os.ReadFile(sourceElement.Name)
+	buf, err := os.ReadFile(sourceElement.Filename)
 	if err != nil {
 		return nil, err
 	}
@@ -250,4 +275,18 @@ func (as *AdaptationSet) Add(t, d, r int64) error {
 	}
 	as.end += d * (r + 1)
 	return nil
+}
+
+func (re *Recording) ShowStats(logger zerolog.Logger) {
+	if len(re.history) > 0 {
+		first := re.history[0].At
+		last := re.history[len(re.history)-1].At
+		logger.Info().Msgf("Recorded %d manifests from %s to %s (%s)",
+			len(re.history),
+			first.Format(time.TimeOnly),
+			last.Format(time.TimeOnly),
+			last.Sub(first),
+		)
+	}
+
 }
