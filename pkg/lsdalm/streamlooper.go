@@ -16,10 +16,13 @@ import (
 
 // Data about our stream. Hardcoded from testing, must be dynamic
 const (
-	timeShiftWindowSize = 25 * time.Second // timeshift buffer size. Should be taken from manifest or from samples
-	LoopPointOffset     = 10 * time.Second // move splicepoint back in time to be outside the live Delay
-	maxMpdGap           = 30 * time.Second // maximum gap between mpd updates
+	timeShiftWindowSize = 25 * time.Second        // timeshift buffer size. Should be taken from manifest or from samples
+	LoopPointOffset     = 10 * time.Second        // move splicepoint back in time to be outside the live Delay
+	maxMpdGap           = 30 * time.Second        // maximum gap between mpd updates
+	segmentSize         = 1920 * time.Millisecond // must be got from stream
 )
+
+var noncont = errors.New("Not in sequence")
 
 // HistoryElement is metadata about a stored Manifest
 type HistoryElement struct {
@@ -42,18 +45,21 @@ func NewAdaptationSet() *AdaptationSet {
 	}
 }
 
-var noncont = errors.New("Not in sequence")
-
 type StreamLooper struct {
 	dumpdir     string
 	manifestDir string
 
-	logger                   zerolog.Logger
-	history                  []HistoryElement
-	historyStart, historyEnd time.Time
+	logger zerolog.Logger
+
+	// Map timestamps to mpd files
+	history []HistoryElement
 
 	originalMpd *mpd.MPD
-	Segments    []*AdaptationSet
+
+	// All the samples we have
+	Segments []*AdaptationSet
+
+	EventStreamMap map[string]*mpd.EventStream
 
 	// statistics
 }
@@ -61,11 +67,12 @@ type StreamLooper struct {
 func NewStreamLooper(dumpdir string, logger zerolog.Logger) (*StreamLooper, error) {
 
 	st := &StreamLooper{
-		dumpdir:     dumpdir,
-		manifestDir: path.Join(dumpdir, ManifestPath),
-		logger:      logger,
-		history:     make([]HistoryElement, 0, 1000),
-		Segments:    make([]*AdaptationSet, 0, 5),
+		dumpdir:        dumpdir,
+		manifestDir:    path.Join(dumpdir, ManifestPath),
+		logger:         logger,
+		history:        make([]HistoryElement, 0, 1000),
+		Segments:       make([]*AdaptationSet, 0, 5),
+		EventStreamMap: make(map[string]*mpd.EventStream),
 	}
 	st.fillData()
 	if len(st.history) < 10 {
@@ -115,24 +122,10 @@ func (sc *StreamLooper) fillData() error {
 
 		sc.logger.Info().Msgf("%d: %s %d-%d Duration %d", len(as.elements), ras.MimeType, as.start, as.end, (as.end-as.start)*1000/int64(*ras.SegmentTemplate.Timescale))
 	}
-	// Find last pts in both first and last manifest
-	fs := sc.history[0].At
-	first, err := sc.loadHistoricMpd(fs)
-	if err != nil {
-		sc.logger.Warn().Err(err).Msg("Cannot load")
-	}
-	ff, fl, _ := sc.getPtsRange(first, "video/mp4")
 
-	ls := sc.history[len(sc.history)-1].At
-	last, err := sc.loadHistoricMpd(ls)
-	if err != nil {
-		sc.logger.Warn().Err(err).Msg("Cannot load")
+	for sId, elem := range sc.EventStreamMap {
+		sc.logger.Info().Msgf("Events: %s: %+v", sId, len(elem.Event))
 	}
-	lf, ll, _ := sc.getPtsRange(last, "video/mp4")
-	sc.logger.Debug().Msgf("Start %s %s-%s", shortT(fs), Round(fs.Sub(ff)), Round(fs.Sub(fl)))
-	sc.logger.Debug().Msgf("End %s %s-%s", shortT(ls), Round(ls.Sub(lf)), Round(ls.Sub(ll)))
-	sc.historyStart = fl
-	sc.historyEnd = ll
 
 	return nil
 }
@@ -190,6 +183,34 @@ func (sc *StreamLooper) AddMpdToHistory(mpde *mpd.MPD) error {
 			}
 			// Todo: Template under Adaptation
 		}
+		// Add events
+		for _, ev := range p.EventStream {
+			if ev.SchemeIdUri == nil {
+				continue
+			}
+			sId := *ev.SchemeIdUri
+			// Look up by scheme
+			have, ok := sc.EventStreamMap[sId]
+			if !ok {
+				sc.EventStreamMap[sId] = ev
+				continue
+			}
+		inloop:
+			// Range events
+			for _, in := range ev.Event {
+				// Compare to the ones already there
+				for _, x := range have.Event {
+					if x.Id == in.Id && ZeroIfNil(x.PresentationTime) == ZeroIfNil(in.PresentationTime) {
+						sc.logger.Trace().Msgf("Found: %d@%d", in.Id, in.PresentationTime)
+						continue inloop
+					}
+				}
+				sc.logger.Info().Msgf("Add Events %s: %d@%d", sId, in.Id, in.PresentationTime)
+				// Append Events if not there
+				have.Event = append(have.Event, in)
+			}
+
+		}
 	}
 	if sc.originalMpd == nil {
 		sc.originalMpd = mpde
@@ -213,7 +234,6 @@ func (sc *StreamLooper) FindHistory(want time.Time) *HistoryElement {
 func (sc *StreamLooper) getRecordingRange() (from, to time.Time) {
 	from = sc.history[0].At
 	to = sc.history[len(sc.history)-1].At
-
 	return
 }
 
@@ -228,8 +248,9 @@ func (sc *StreamLooper) getLoopMeta(at, now time.Time, requestDuration time.Dura
 
 	// Data from history buffer
 	// This is inexact, the last might not have all Segments downloaded
-	start, _ = sc.getRecordingRange()
-	duration = sc.historyEnd.Sub(sc.historyStart)
+	var end time.Time
+	start, end = sc.getRecordingRange()
+	duration = end.Sub(start) / segmentSize * segmentSize //sc.historyEnd.Sub(sc.historyStart)
 
 	offset = at.Sub(start) % duration
 	shift = now.Add(-offset).Sub(start)
@@ -237,7 +258,7 @@ func (sc *StreamLooper) getLoopMeta(at, now time.Time, requestDuration time.Dura
 	return
 }
 
-// AdjustMpd adds a time offset to each Period in the Manifest, shifting the PresentationTime
+// AdjustMpd adds 'shift' to the 'start' attribute of each Period, shifting the PresentationTime
 func (sc *StreamLooper) AdjustMpd(mpde *mpd.MPD, shift time.Duration) *mpd.MPD {
 	if len(mpde.Period) == 0 {
 		return nil
@@ -284,6 +305,7 @@ func RoundToS(in time.Duration) time.Duration {
 	return RoundTo(in, time.Second)
 }
 
+/*
 // filterMpd drops every segment reference outside from-to timeframe from the mpd
 func (sc *StreamLooper) filterMpd(mpde *mpd.MPD, from, to time.Time) *mpd.MPD {
 	var ast time.Time
@@ -330,6 +352,7 @@ func (sc *StreamLooper) filterMpd(mpde *mpd.MPD, from, to time.Time) *mpd.MPD {
 	}
 	return mpde
 }
+*/
 
 // mergeMpd appends the periods from mpd2 into mpd1,
 func (sc *StreamLooper) mergeMpd(mpd1, mpd2 *mpd.MPD) *mpd.MPD {
@@ -400,13 +423,13 @@ func (sc *StreamLooper) BuildMpd(shift time.Duration, id string, newstart, from,
 		//startrt := newstart.Add(-TLP2Duration(int64(ZeroIfNil(nst.PresentationTimeOffset)), ZeroIfNil(nst.Timescale)))
 		start := elements.start
 		timescale := ZeroIfNil(nst.Timescale)
+		pto := ZeroIfNil(nst.PresentationTimeOffset)
 		first := true
 		for _, s := range elements.elements {
 			for ri := int64(0); ri <= s.r; ri++ {
-				ts := newstart.Add(TLP2Duration(int64(uint64(start)-ZeroIfNil(nst.PresentationTimeOffset)),
-					timescale))
+				ts := newstart.Add(TLP2Duration(int64(uint64(start)-pto), timescale))
 				d := TLP2Duration(s.d, timescale)
-				if !ts.Before(from) && ts.Add(d).Before(to) {
+				if !ts.Add(d).Before(from) && ts.Add(d).Before(to) {
 					t := uint64(0)
 					if first {
 						t = uint64(start)
@@ -420,6 +443,19 @@ func (sc *StreamLooper) BuildMpd(shift time.Duration, id string, newstart, from,
 		}
 		np.AdaptationSets = append(np.AdaptationSets, nas)
 
+	}
+
+	// Add Events
+	np.EventStream = np.EventStream[:0]
+	for _, ev := range sc.EventStreamMap {
+		// Append all for all ranges: Todo: map offset, duration
+		evs := new(mpd.EventStream)
+		*evs = *ev
+		pto := uint64(ZeroIfNil(ev.PresentationTimeOffset))
+		timescale := ZeroIfNil(ev.Timescale)
+		pto = uint64(int64(pto) + Duration2TLP(shiftValue, timescale))
+		evs.PresentationTimeOffset = &pto
+		np.EventStream = append(np.EventStream, evs)
 	}
 	//sc.logger.Info().Msgf("Period %d start: %s", periodIdx, periodStart)
 	outMpd.Period = append(outMpd.Period, np)
@@ -437,7 +473,7 @@ func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Durati
 	// Check if we are around the loop point
 	var mpdCurrent *mpd.MPD
 	if offset < timeShiftWindowSize {
-		sc.logger.Info().Msgf("Loop point: %s", shortT(startOfRecording.Add(shift)))
+		sc.logger.Debug().Msgf("Loop point: %s", shortT(startOfRecording.Add(shift)))
 		mpdPrevious := sc.BuildMpd(
 			shift-duration,
 			fmt.Sprintf("Id-%d", shift/duration-1),
@@ -491,6 +527,7 @@ func (sc *StreamLooper) GetPlayback(at, now time.Time, requestDuration time.Dura
 	return afterEncode, nil
 }
 
+/*
 // Iterate through all periods, representation, segmentTimeline and
 func (sc *StreamLooper) getPtsRange(mpde *mpd.MPD, mimetype string) (time.Time, time.Time, error) {
 
@@ -511,11 +548,6 @@ func (sc *StreamLooper) getPtsRange(mpde *mpd.MPD, mimetype string) (time.Time, 
 			if as.SegmentTemplate == nil || as.SegmentTemplate.SegmentTimeline == nil || len(as.SegmentTemplate.SegmentTimeline.S) == 0 {
 				continue
 			}
-			/*
-				if as.MimeType != mimetype {
-					continue
-				}
-			*/
 			// Calculate period start
 			var start time.Duration
 			if period.Start != nil {
@@ -546,6 +578,7 @@ func (sc *StreamLooper) getPtsRange(mpde *mpd.MPD, mimetype string) (time.Time, 
 	}
 	return earliest, latest, nil
 }
+*/
 
 // Handler serves manifests
 func (sc *StreamLooper) Handler(w http.ResponseWriter, r *http.Request) {

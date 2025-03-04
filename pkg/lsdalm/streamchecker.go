@@ -240,7 +240,7 @@ func (sc *StreamChecker) walkMpd(mpde *mpd.MPD) error {
 				duration := ZeroIfNil(event.Duration)
 				pt := ZeroIfNil(event.PresentationTime)
 				// signal, content
-				sc.logger.Info().Msgf("SCTE35 Id: %d Duration: %s Time %s", event.Id, TLP2Duration(int64(duration), timescale), shortT(periodStart.Add(TLP2Duration(int64(pt-pto), timescale))))
+				sc.logger.Info().Msgf("SCTE35 Id: %d Duration: %s Time %s", event.Id, TLP2Duration(int64(duration), timescale), periodStart.Add(TLP2Duration(int64(pt-pto), timescale)))
 			}
 		}
 		_ = periodStart
