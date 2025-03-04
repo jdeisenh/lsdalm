@@ -465,14 +465,14 @@ func (sc *StreamLooper) BuildMpd(shift time.Duration, id string, newstart, from,
 			ts := newstart.Add(TLP2Duration(int64(*e.PresentationTime-pto), timescale))
 			d := TLP2Duration(int64(ZeroIfNil(e.Duration)), timescale)
 			// Still in the future
-			if ts.Before(from) {
+			if from.After(ts) {
 				continue
 			}
 			// End of event in the past
-			if ts.Add(d).Before(to) {
+			if to.After(ts.Add(d)) {
 				continue
 			}
-			sc.logger.Info().Msgf("Add Event %d at %s", e.Id, ts)
+			sc.logger.Debug().Msgf("Add Event %d at %s", e.Id, ts)
 			fel = append(fel, e)
 
 		}
