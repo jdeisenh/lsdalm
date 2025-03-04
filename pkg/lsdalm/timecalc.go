@@ -39,6 +39,11 @@ func Round(in time.Duration) time.Duration {
 	return RoundTo(in, time.Millisecond*10)
 }
 
+// RoundToS Rounds a duration to full seconds
+func RoundToS(in time.Duration) time.Duration {
+	return RoundTo(in, time.Second)
+}
+
 func DurationToXsdDuration(duration time.Duration) xsd.Duration {
 
 	return xsd.Duration{
