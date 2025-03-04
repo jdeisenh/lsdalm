@@ -474,7 +474,7 @@ func (sc *StreamLooper) BuildMpd(shift time.Duration, id string, newstart, from,
 				sc.logger.Debug().Msgf("Skip Event %s %d at ends %s before %s", EmptyIfNil(evs.SchemeIdUri), e.Id, shortT(ts.Add(d)), shortT(from))
 				continue
 			}
-			sc.logger.Info().Debug("Add Event %s %d at %s-%s", EmptyIfNil(evs.SchemeIdUri), e.Id, shortT(ts), shortT(ts.Add(d)))
+			sc.logger.Debug().Msgf("Add Event %s %d at %s-%s", EmptyIfNil(evs.SchemeIdUri), e.Id, shortT(ts), shortT(ts.Add(d)))
 			fel = append(fel, e)
 
 		}
