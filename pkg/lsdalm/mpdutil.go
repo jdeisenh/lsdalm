@@ -52,26 +52,6 @@ func All(stl *mpd.SegmentTimeline) func(func(t, d uint64) bool) {
 	}
 }
 
-// Append adds a segemnt to a SegmentTimeline
-// We do not check the time for gaps, this would require re-counting on every insert
-func Append(st *mpd.SegmentTimeline, t, d uint64) {
-	if len(st.S) == 0 {
-		st.S = append(st.S, &mpd.SegmentTimelineS{T: &t, D: d})
-		return
-	}
-	last := st.S[len(st.S)-1]
-	if last.D == d {
-		if last.R == nil {
-			r := int64(1)
-			last.R = &r
-		} else {
-			*last.R++
-		}
-	} else {
-		st.S = append(st.S, &mpd.SegmentTimelineS{T: &t, D: d})
-	}
-}
-
 // AppendR adds a segemnt to a SegmentTimeline
 // We do not check the time for gaps, this would require re-counting on every insert
 func AppendR(st *mpd.SegmentTimeline, t, d uint64, r int64) {
@@ -98,49 +78,6 @@ func AppendR(st *mpd.SegmentTimeline, t, d uint64, r int64) {
 	} else {
 		st.S = append(st.S, &mpd.SegmentTimelineS{T: tp, D: d, R: rp})
 	}
-}
-
-// filterSegmentTemplate walks all Segments inside a Segmenttemplate, calling filter, removing every segment that the callback returns false
-func filterSegmentTemplate(st *mpd.SegmentTemplate, periodStart time.Time, filter func(t time.Time, d time.Duration) bool) (total, filtered int) {
-
-	if st == nil || st.SegmentTimeline == nil {
-		return
-	}
-	var pto uint64
-	if st.PresentationTimeOffset != nil {
-		pto = *st.PresentationTimeOffset
-	}
-	stl := st.SegmentTimeline
-	if stl == nil {
-		return
-	}
-	//fmt.Printf("SegmentTemplate: %+v\n", st)
-	timescale := uint64(1)
-	if st.Timescale != nil {
-		timescale = *st.Timescale
-	}
-	st.SegmentTimeline = filterSegmentTimeline(st.SegmentTimeline, func(t, d uint64) bool {
-		total++
-		r := filter(
-			periodStart.Add(TLP2Duration(int64(t-pto), timescale)),
-			TLP2Duration(int64(d), timescale),
-		)
-		if !r {
-			filtered++
-		}
-		return r
-	})
-	return
-}
-
-func filterSegmentTimeline(in *mpd.SegmentTimeline, filter func(t, d uint64) bool) *mpd.SegmentTimeline {
-	out := new(mpd.SegmentTimeline)
-	for t, d := range All(in) {
-		if filter(t, d) {
-			Append(out, t, d)
-		}
-	}
-	return out
 }
 
 // walkSegmentTemplate walks a segmentTemplate and calls 'action' on all media Segments with their full URL
@@ -237,70 +174,6 @@ func shiftPto(st *mpd.SegmentTemplate, shiftValue time.Duration) {
 	pto = uint64(int64(pto) + Duration2TLP(shiftValue, timescale))
 	// Write back
 	st.PresentationTimeOffset = &pto
-}
-
-// reframePeriods moves start of period to newStart and sets ID
-// The shift is countered by a change to presentationTimeOffset, so
-// the position on the timeline does not change
-func reframePeriods(mpde *mpd.MPD, id string, newStart time.Time) *mpd.MPD {
-	// Walk all Periods, AdaptationSets and Representations
-	// Calculate period start
-	var ast time.Time
-	if mpde.AvailabilityStartTime != nil {
-		ast = time.Time(*mpde.AvailabilityStartTime)
-	}
-	var shiftValue time.Duration
-	for _, period := range mpde.Period {
-
-		var start time.Duration
-		if period.Start != nil {
-			startmed, _ := (*period.Start).ToNanoseconds()
-			start = time.Duration(startmed)
-			//log.Warn().Msgf("Start: %s", start)
-			shiftValue = newStart.Sub(ast) - start
-			//log.Warn().Msgf("Newstart: %s", newStart)
-			//log.Warn().Msgf("Shift: %s", shiftValue)
-			*period.Start = DurationToXsdDuration(newStart.Sub(ast))
-		}
-		if period.ID != nil {
-			*period.ID = id
-		}
-
-		// Shift EventStreams
-		resultAs := period.AdaptationSets[:0]
-		for _, as := range period.AdaptationSets {
-
-			if st := as.SegmentTemplate; st != nil {
-				shiftPto(st, shiftValue)
-			} else {
-				for _, pres := range as.Representations {
-					if st := pres.SegmentTemplate; st != nil {
-						shiftPto(st, shiftValue)
-					}
-				}
-			}
-			resultAs = append(resultAs, as)
-		}
-		period.AdaptationSets = resultAs
-
-		// Shift Eventstreams
-		for _, es := range period.EventStream {
-			timescale := uint64(1)
-			if es.Timescale != nil {
-				timescale = *es.Timescale
-			}
-			pto := uint64(0)
-			if lpto := es.PresentationTimeOffset; lpto != nil {
-				pto = *lpto
-			}
-			pto = uint64(int64(pto) + Duration2TLP(shiftValue, timescale))
-			// Write back
-			es.PresentationTimeOffset = &pto
-
-		}
-	}
-	return mpde
-
 }
 
 // Iterate through all periods, representation, segmentTimeline and

@@ -34,6 +34,7 @@ func RoundTo(in time.Duration, to time.Duration) time.Duration {
 	return in / to * to
 }
 
+// Round turation to 10 milliseconds
 func Round(in time.Duration) time.Duration {
 	return RoundTo(in, time.Millisecond*10)
 }
@@ -47,4 +48,9 @@ func DurationToXsdDuration(duration time.Duration) xsd.Duration {
 		Nanoseconds: int64(duration / time.Nanosecond % 1000000000),
 	}
 
+}
+
+// shortT returns a short string representation of the time
+func shortT(in time.Time) string {
+	return in.UTC().Format("15:04:05.00")
 }

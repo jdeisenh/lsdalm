@@ -59,6 +59,7 @@ type StreamLooper struct {
 	// All the samples we have
 	Segments []*AdaptationSet
 
+	// All EventStreams
 	EventStreamMap map[string]*mpd.EventStream
 
 	// statistics
@@ -307,55 +308,6 @@ func RoundToS(in time.Duration) time.Duration {
 	return RoundTo(in, time.Second)
 }
 
-/*
-// filterMpd drops every segment reference outside from-to timeframe from the mpd
-func (sc *StreamLooper) filterMpd(mpde *mpd.MPD, from, to time.Time) *mpd.MPD {
-	var ast time.Time
-	if mpde.AvailabilityStartTime != nil {
-		ast = time.Time(*mpde.AvailabilityStartTime)
-	}
-	retained := 0
-	//sc.logger.Info().Msgf("Filter:%s-%s", shortT(from.UTC()), shortT(to.UTC()))
-	for _, period := range mpde.Period {
-		if len(period.AdaptationSets) == 0 {
-			continue
-		}
-		// Calculate period start
-		var start time.Duration
-		if period.Start != nil {
-			startmed, _ := (*period.Start).ToNanoseconds()
-			start = time.Duration(startmed)
-		}
-		periodStart := ast.Add(start)
-		if period.AdaptationSets != nil {
-			// Could be under Representation
-			for _, as := range period.AdaptationSets {
-				if as.SegmentTemplate == nil || as.SegmentTemplate.SegmentTimeline == nil {
-					continue
-				}
-				// Filter the SegmentTimeline for timestamps
-				total, filtered := filterSegmentTemplate(
-					as.SegmentTemplate,
-					periodStart,
-					func(st time.Time, sd time.Duration) bool {
-						r := !st.Before(from) && !st.Add(sd).After(to)
-						//sc.logger.Info().Msgf("Seg %s %s %v", shortT(t), Round(d), r)
-						return r
-					})
-				retained += total - filtered
-			}
-		}
-
-		//sc.logger.Info().Msgf("Period %d start: %s", periodIdx, periodStart)
-
-	}
-	if retained == 0 {
-		return nil
-	}
-	return mpde
-}
-*/
-
 // mergeMpd appends the periods from mpd2 into mpd1,
 func (sc *StreamLooper) mergeMpd(mpd1, mpd2 *mpd.MPD) *mpd.MPD {
 	if mpd1 == nil {
@@ -553,59 +505,6 @@ func (sc *StreamLooper) GetPlayback(at, now time.Time, requestDuration time.Dura
 	return afterEncode, nil
 }
 
-/*
-// Iterate through all periods, representation, segmentTimeline and
-func (sc *StreamLooper) getPtsRange(mpde *mpd.MPD, mimetype string) (time.Time, time.Time, error) {
-
-	if len(mpde.Period) == 0 {
-		return time.Time{}, time.Time{}, errors.New("No periods")
-	}
-	var ast time.Time
-	if mpde.AvailabilityStartTime != nil {
-		ast = time.Time(*mpde.AvailabilityStartTime)
-	}
-
-	var earliest, latest time.Time
-
-	for periodId, period := range mpde.Period {
-		for _, as := range period.AdaptationSets {
-
-			// If there is no segmentTimeline, skip it
-			if as.SegmentTemplate == nil || as.SegmentTemplate.SegmentTimeline == nil || len(as.SegmentTemplate.SegmentTimeline.S) == 0 {
-				continue
-			}
-			// Calculate period start
-			var start time.Duration
-			if period.Start != nil {
-				startmed, _ := (*period.Start).ToNanoseconds()
-				start = time.Duration(startmed)
-			}
-			periodStart := ast.Add(start)
-			from, to := sumSegmentTemplate(as.SegmentTemplate, periodStart)
-			if from.IsZero() {
-				for _, pres := range as.Representations {
-					if pres.SegmentTemplate != nil {
-						from, to = sumSegmentTemplate(pres.SegmentTemplate, periodStart)
-						break
-					}
-				}
-			}
-			sc.logger.Debug().Msgf("Period %d As %s From %s to %s", periodId, as.MimeType, shortT(from), shortT(to))
-			if as.MimeType != mimetype {
-				continue
-			}
-			if earliest.IsZero() || from.Before(earliest) {
-				earliest = from
-			}
-			if to.After(latest) {
-				latest = to
-			}
-		}
-	}
-	return earliest, latest, nil
-}
-*/
-
 // Handler serves manifests
 func (sc *StreamLooper) Handler(w http.ResponseWriter, r *http.Request) {
 	/*
@@ -688,11 +587,6 @@ func (sc *StreamLooper) rewriteBaseUrl(base string, upstream *url.URL) string {
 		return base
 	}
 	return upstream.ResolveReference(ur).String()
-}
-
-// shortT returns a short string representation of the time
-func shortT(in time.Time) string {
-	return in.UTC().Format("15:04:05.00")
 }
 
 func (as *AdaptationSet) Add(t, d, r int64) error {
