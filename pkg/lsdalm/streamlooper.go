@@ -109,8 +109,11 @@ func (sc *StreamLooper) fillData() error {
 			sc.logger.Error().Err(err).Msg("Add manifest")
 		}
 	}
-	for _, as := range sc.Segments {
-		sc.logger.Info().Msgf("%d: %d-%d", len(as.elements), as.start, as.end)
+
+	for k, as := range sc.Segments {
+		ras := sc.originalMpd.Period[0].AdaptationSets[k]
+
+		sc.logger.Info().Msgf("%d: %s %d-%d Duration %d", len(as.elements), ras.MimeType, as.start, as.end, (as.end-as.start)*1000/int64(*ras.SegmentTemplate.Timescale))
 	}
 	// Find last pts in both first and last manifest
 	fs := sc.history[0].At
@@ -126,7 +129,6 @@ func (sc *StreamLooper) fillData() error {
 		sc.logger.Warn().Err(err).Msg("Cannot load")
 	}
 	lf, ll, _ := sc.getPtsRange(last, "video/mp4")
-
 	sc.logger.Debug().Msgf("Start %s %s-%s", shortT(fs), Round(fs.Sub(ff)), Round(fs.Sub(fl)))
 	sc.logger.Debug().Msgf("End %s %s-%s", shortT(ls), Round(ls.Sub(lf)), Round(ls.Sub(ll)))
 	sc.historyStart = fl
@@ -240,9 +242,9 @@ func (sc *StreamLooper) AdjustMpd(mpde *mpd.MPD, shift time.Duration) *mpd.MPD {
 	if len(mpde.Period) == 0 {
 		return nil
 	}
-	mpdn := new(mpd.MPD)
-	*mpdn = *mpde
-	mpdn.Period = make([]*mpd.Period, 0, 1)
+	outMpd := new(mpd.MPD)
+	*outMpd = *mpde
+	outMpd.Period = make([]*mpd.Period, 0, 1)
 	for _, period := range mpde.Period {
 		// Shift periods
 		np := new(mpd.Period)
@@ -253,9 +255,9 @@ func (sc *StreamLooper) AdjustMpd(mpde *mpd.MPD, shift time.Duration) *mpd.MPD {
 			ns := DurationToXsdDuration(start + shift)
 			np.Start = &ns
 		}
-		mpdn.Period = append(mpdn.Period, np)
+		outMpd.Period = append(outMpd.Period, np)
 	}
-	return mpdn
+	return outMpd
 }
 
 // Find a manifest at time 'at'
@@ -307,7 +309,6 @@ func (sc *StreamLooper) filterMpd(mpde *mpd.MPD, from, to time.Time) *mpd.MPD {
 				if as.SegmentTemplate == nil || as.SegmentTemplate.SegmentTimeline == nil {
 					continue
 				}
-				//buf_from, buf_to := sumSegmentTemplate(as.SegmentTemplate, periodStart)
 				// Filter the SegmentTimeline for timestamps
 				total, filtered := filterSegmentTemplate(
 					as.SegmentTemplate,
@@ -317,7 +318,6 @@ func (sc *StreamLooper) filterMpd(mpde *mpd.MPD, from, to time.Time) *mpd.MPD {
 						//sc.logger.Info().Msgf("Seg %s %s %v", shortT(t), Round(d), r)
 						return r
 					})
-				//buf_from, buf_to = sumSegmentTemplate(as.SegmentTemplate, periodStart)
 				retained += total - filtered
 			}
 		}
@@ -333,49 +333,98 @@ func (sc *StreamLooper) filterMpd(mpde *mpd.MPD, from, to time.Time) *mpd.MPD {
 
 // mergeMpd appends the periods from mpd2 into mpd1,
 func (sc *StreamLooper) mergeMpd(mpd1, mpd2 *mpd.MPD) *mpd.MPD {
-	mpd1.Period = append(mpd1.Period, mpd2.Period...)
-	return mpd1
+	if mpd1 == nil {
+		return mpd2
+	} else if mpd2 == nil {
+		return mpd1
+	} else {
+		mpd1.Period = append(mpd1.Period, mpd2.Period...)
+		return mpd1
+	}
 }
 
-func (sc *StreamLooper) BuildMpd() *mpd.MPD {
+func (sc *StreamLooper) BuildMpd(shift time.Duration, id string, newstart, from, to time.Time) *mpd.MPD {
 	mpde := sc.originalMpd
-	for _, period := range mpde.Period {
-		if len(period.AdaptationSets) == 0 {
+	outMpd := new(mpd.MPD)
+	*outMpd = *mpde // Copy mpd
+
+	period := mpde.Period[0] // There is only one
+
+	// OUput period
+	outMpd.Period = make([]*mpd.Period, 0, 1)
+	// Loop over output periods in timeShiftWindow
+
+	if len(period.AdaptationSets) == 0 {
+		return outMpd
+	}
+
+	// Copy period
+	np := new(mpd.Period)
+	*np = *period
+
+	var ast time.Time
+	if mpde.AvailabilityStartTime != nil {
+		ast = time.Time(*mpde.AvailabilityStartTime)
+	}
+
+	// Calculate period start
+	var shiftValue time.Duration
+	if period.Start != nil {
+		startmed, _ := (*period.Start).ToNanoseconds()
+		start := time.Duration(startmed)
+		shiftValue = newstart.Sub(ast) - start - shift
+		ns := DurationToXsdDuration(newstart.Sub(ast))
+		np.Start = &ns
+	}
+	if period.ID != nil {
+		np.ID = &id
+	}
+
+	np.AdaptationSets = make([]*mpd.AdaptationSet, 0, 5)
+	for asi, as := range period.AdaptationSets {
+		if as.SegmentTemplate == nil || as.SegmentTemplate.SegmentTimeline == nil {
 			continue
 		}
-		// Calculate period start
-		var start time.Duration
-		if period.Start != nil {
-			startmed, _ := (*period.Start).ToNanoseconds()
-			start = time.Duration(startmed)
-		}
-		_ = start
-		//periodStart := ast.Add(start)
-		if period.AdaptationSets == nil {
-			continue
-		}
-		for asi, as := range period.AdaptationSets {
-			if as.SegmentTemplate == nil || as.SegmentTemplate.SegmentTimeline == nil {
-				continue
-			}
-			stl := as.SegmentTemplate.SegmentTimeline
-			stl.S = stl.S[:0]
-			elements := sc.Segments[asi]
-			start := elements.start
-			for si, s := range elements.elements {
-				t := uint64(0)
-				if si == 0 {
-					t = uint64(start)
+		nas := new(mpd.AdaptationSet)
+		*nas = *as
+		nst := new(mpd.SegmentTemplate)
+		nas.SegmentTemplate = nst
+		*nst = *as.SegmentTemplate
+		nstl := new(mpd.SegmentTimeline)
+		nst.SegmentTimeline = nstl
+		*nstl = *nst.SegmentTimeline
+
+		nstl.S = nstl.S[:0]
+		elements := sc.Segments[asi]
+		shiftPto(nst, shiftValue)
+		//startrt := newstart.Add(-TLP2Duration(int64(ZeroIfNil(nst.PresentationTimeOffset)), ZeroIfNil(nst.Timescale)))
+		start := elements.start
+		timescale := ZeroIfNil(nst.Timescale)
+		first := true
+		for _, s := range elements.elements {
+			for ri := int64(0); ri <= s.r; ri++ {
+				ts := newstart.Add(TLP2Duration(int64(uint64(start)-ZeroIfNil(nst.PresentationTimeOffset)),
+					timescale))
+				d := TLP2Duration(s.d, timescale)
+				if !ts.Before(from) && ts.Add(d).Before(to) {
+					t := uint64(0)
+					if first {
+						t = uint64(start)
+						first = false
+					}
+					AppendR(nstl, t, uint64(s.d), 0)
 				}
-				AppendR(stl, t, uint64(s.d), int64(s.r))
-				start += s.d * (s.r + 1)
+				start += s.d
 			}
 
 		}
-		//sc.logger.Info().Msgf("Period %d start: %s", periodIdx, periodStart)
+		np.AdaptationSets = append(np.AdaptationSets, nas)
 
 	}
-	return mpde
+	//sc.logger.Info().Msgf("Period %d start: %s", periodIdx, periodStart)
+	outMpd.Period = append(outMpd.Period, np)
+
+	return outMpd
 }
 
 // GetLooped generates a Manifest by finding the manifest before now%duration
@@ -384,11 +433,35 @@ func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Durati
 	offset, shift, duration, startOfRecording := sc.getLoopMeta(at, now, requestDuration)
 	sc.logger.Info().Msgf("Offset: %s TimeShift: %s LoopDuration: %s LoopStart:%s At %s",
 		RoundToS(offset), RoundToS(shift), RoundToS(duration), shortT(startOfRecording), shortT(at))
-	mpdCurrent := sc.BuildMpd()
-	mpdCurrent = sc.AdjustMpd(mpdCurrent, shift) // Manipulate
-	mpdCurrent = sc.filterMpd(mpdCurrent, now.Add(-timeShiftWindowSize), now)
 
-	//mpdCurrent = reframePeriods(mpdCurrent, fmt.Sprintf("Id-%d", shift/duration), startOfRecording.Add(shift).Add(-LoopPointOffset))
+	// Check if we are around the loop point
+	var mpdCurrent *mpd.MPD
+	if offset < timeShiftWindowSize {
+		sc.logger.Info().Msgf("Loop point: %s", shortT(startOfRecording.Add(shift)))
+		mpdPrevious := sc.BuildMpd(
+			shift-duration,
+			fmt.Sprintf("Id-%d", shift/duration-1),
+			startOfRecording.Add(shift).Add(-duration),
+			now.Add(-timeShiftWindowSize),
+			startOfRecording.Add(shift),
+		)
+		mpdCurrent = sc.BuildMpd(
+			shift,
+			fmt.Sprintf("Id-%d", shift/duration),
+			startOfRecording.Add(shift),
+			startOfRecording.Add(shift),
+			now,
+		)
+		mpdCurrent = sc.mergeMpd(mpdPrevious, mpdCurrent)
+	} else {
+		mpdCurrent = sc.BuildMpd(
+			shift,
+			fmt.Sprintf("Id-%d", shift/duration),
+			startOfRecording.Add(shift),
+			now.Add(-timeShiftWindowSize),
+			now,
+		)
+	}
 	// re-encode
 	afterEncode, err := mpdCurrent.Encode()
 	if err != nil {
@@ -459,7 +532,7 @@ func (sc *StreamLooper) getPtsRange(mpde *mpd.MPD, mimetype string) (time.Time, 
 					}
 				}
 			}
-			sc.logger.Info().Msgf("Period %d As %s From %s to %s", periodId, as.MimeType, shortT(from), shortT(to))
+			sc.logger.Debug().Msgf("Period %d As %s From %s to %s", periodId, as.MimeType, shortT(from), shortT(to))
 			if as.MimeType != mimetype {
 				continue
 			}
@@ -560,7 +633,7 @@ func (sc *StreamLooper) rewriteBaseUrl(base string, upstream *url.URL) string {
 
 // shortT returns a short string representation of the time
 func shortT(in time.Time) string {
-	return in.Format("15:04:05.00")
+	return in.UTC().Format("15:04:05.00")
 }
 
 func (as *AdaptationSet) Add(t, d, r int64) error {
