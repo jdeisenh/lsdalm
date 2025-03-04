@@ -465,19 +465,23 @@ func (sc *StreamLooper) BuildMpd(shift time.Duration, id string, newstart, from,
 			ts := newstart.Add(TLP2Duration(int64(*e.PresentationTime-pto), timescale))
 			d := TLP2Duration(int64(ZeroIfNil(e.Duration)), timescale)
 			// Still in the future
-			if from.After(ts) {
+			if ts.After(to) {
+				sc.logger.Debug().Msgf("Skip Event %s %d at %s in the future of %s", EmptyIfNil(evs.SchemeIdUri), e.Id, shortT(ts), shortT(to))
 				continue
 			}
-			// End of event in the past
-			if to.After(ts.Add(d)) {
+			// End of event in the past end > to
+			if from.After(ts.Add(d)) {
+				sc.logger.Debug().Msgf("Skip Event %s %d at ends %s before %s", EmptyIfNil(evs.SchemeIdUri), e.Id, shortT(ts.Add(d)), shortT(from))
 				continue
 			}
-			sc.logger.Debug().Msgf("Add Event %d at %s", e.Id, ts)
+			sc.logger.Info().Debug("Add Event %s %d at %s-%s", EmptyIfNil(evs.SchemeIdUri), e.Id, shortT(ts), shortT(ts.Add(d)))
 			fel = append(fel, e)
 
 		}
 		evs.Event = fel
-		np.EventStream = append(np.EventStream, evs)
+		if len(evs.Event) > 0 {
+			np.EventStream = append(np.EventStream, evs)
+		}
 	}
 	//sc.logger.Info().Msgf("Period %d start: %s", periodIdx, periodStart)
 	outMpd.Period = append(outMpd.Period, np)
