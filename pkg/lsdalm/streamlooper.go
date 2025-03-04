@@ -192,6 +192,7 @@ func (sc *StreamLooper) AddMpdToHistory(mpde *mpd.MPD) error {
 			// Look up by scheme
 			have, ok := sc.EventStreamMap[sId]
 			if !ok {
+				ev.Event = ev.Event[:0]
 				sc.EventStreamMap[sId] = ev
 				continue
 			}
@@ -207,6 +208,7 @@ func (sc *StreamLooper) AddMpdToHistory(mpde *mpd.MPD) error {
 				}
 				sc.logger.Info().Msgf("Add Events %s: %d@%d", sId, in.Id, in.PresentationTime)
 				// Append Events if not there
+				in.Content = "" // Clean up cruft
 				have.Event = append(have.Event, in)
 			}
 
@@ -441,6 +443,9 @@ func (sc *StreamLooper) BuildMpd(shift time.Duration, id string, newstart, from,
 			}
 
 		}
+		if len(nstl.S) == 0 {
+			nst.SegmentTimeline = nil
+		}
 		np.AdaptationSets = append(np.AdaptationSets, nas)
 
 	}
@@ -455,6 +460,23 @@ func (sc *StreamLooper) BuildMpd(shift time.Duration, id string, newstart, from,
 		timescale := ZeroIfNil(ev.Timescale)
 		pto = uint64(int64(pto) + Duration2TLP(shiftValue, timescale))
 		evs.PresentationTimeOffset = &pto
+		fel := evs.Event[:0]
+		for _, e := range evs.Event {
+			ts := newstart.Add(TLP2Duration(int64(*e.PresentationTime-pto), timescale))
+			d := TLP2Duration(int64(ZeroIfNil(e.Duration)), timescale)
+			// Still in the future
+			if ts.Before(from) {
+				continue
+			}
+			// End of event in the past
+			if ts.Add(d).Before(to) {
+				continue
+			}
+			sc.logger.Info().Msgf("Add Event %d at %s", e.Id, ts)
+			fel = append(fel, e)
+
+		}
+		evs.Event = fel
 		np.EventStream = append(np.EventStream, evs)
 	}
 	//sc.logger.Info().Msgf("Period %d start: %s", periodIdx, periodStart)
