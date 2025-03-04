@@ -398,7 +398,7 @@ func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Durati
 }
 
 // GetLooped generates a Manifest by finding the manifest before now%duration
-func (sc *StreamLooper) GetLooped_old(at, now time.Time, requestDuration time.Duration) ([]byte, error) {
+func (sc *StreamLooper) GetPlayback(at, now time.Time, requestDuration time.Duration) ([]byte, error) {
 
 	offset, shift, duration, startOfRecording := sc.getLoopMeta(at, now, requestDuration)
 	sc.logger.Info().Msgf("Offset: %s TimeShift: %s LoopDuration: %s LoopStart:%s At %s",
@@ -408,44 +408,7 @@ func (sc *StreamLooper) GetLooped_old(at, now time.Time, requestDuration time.Du
 		return []byte{}, err
 	}
 
-	mpdCurrent = sc.AdjustMpd(mpdCurrent, shift) // Manipulate
-
-	mpdCurrent = reframePeriods(mpdCurrent, fmt.Sprintf("Id-%d", shift/duration), startOfRecording.Add(shift).Add(-LoopPointOffset))
-	//sc.logger.Info().Msgf("Move period: %s", startOfRecording.Add(shift))
-
-	if offset < timeShiftWindowSize {
-		// We are just over the edge. We need an older manifest to add to our window
-		// Load the last segment
-		mpdPrevious, _ := sc.loadHistoricMpd(sc.history[len(sc.history)-1].At) //startOfRecording.Add(duration))
-		if duration < timeShiftWindowSize {
-			sc.logger.Error().Msg("unhandled case")
-		} else {
-			mpdCurrent = sc.AdjustMpd(mpdPrevious, shift-duration) // add Below
-			loopPoint := startOfRecording.Add(shift).Add(-LoopPointOffset)
-			//sc.logger.Info().Msgf("Loop-point: %s", shortT(loopPoint))
-
-			// Cut segments to become non-overlapping
-			mpdPrevious = sc.filterMpd(mpdPrevious, now.Add(-timeShiftWindowSize).Add(-LoopPointOffset), loopPoint)
-			mpdCurrent = sc.filterMpd(mpdCurrent, loopPoint, now)
-			// Shift
-			if mpdPrevious != nil {
-				reframePeriods(mpdPrevious, fmt.Sprintf("Id-%d", shift/duration-1), startOfRecording.Add(shift).Add(-duration).Add(-LoopPointOffset))
-			}
-		}
-		if mpdPrevious != nil && mpdCurrent != nil {
-			mpdCurrent = sc.mergeMpd(mpdPrevious, mpdCurrent)
-		} else if mpdCurrent == nil {
-			mpdCurrent = mpdPrevious
-		} else {
-			sc.logger.Debug().Msg("Drop period")
-		}
-		// Get mpd from the end of the period
-		// Shift one period less
-		// cut from time-shift-window to seam
-		// and seam to live-edge
-		// shrink
-		// combine
-	}
+	mpdCurrent = sc.AdjustMpd(mpdCurrent, shift) // shift PresentationTime
 
 	// re-encode
 	afterEncode, err := mpdCurrent.Encode()
