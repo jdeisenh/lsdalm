@@ -242,7 +242,7 @@ func shiftPto(st *mpd.SegmentTemplate, shiftValue time.Duration) {
 // reframePeriods moves start of period to newStart and sets ID
 // The shift is countered by a change to presentationTimeOffset, so
 // the position on the timeline does not change
-func reframePeriods(mpde *mpd.MPD, id string, newStart time.Time) {
+func reframePeriods(mpde *mpd.MPD, id string, newStart time.Time) *mpd.MPD {
 	// Walk all Periods, AdaptationSets and Representations
 	// Calculate period start
 	var ast time.Time
@@ -269,11 +269,6 @@ func reframePeriods(mpde *mpd.MPD, id string, newStart time.Time) {
 		// Shift EventStreams
 		resultAs := period.AdaptationSets[:0]
 		for _, as := range period.AdaptationSets {
-			if !(as.MimeType == "audio/mp4" && EmptyIfNil(as.Codecs) == "mp4a.40.2") &&
-				!(as.MimeType == "video/mp4") {
-				// Hack: only keep important AdaptationSets, that also are aligned
-				continue
-			}
 
 			if st := as.SegmentTemplate; st != nil {
 				shiftPto(st, shiftValue)
@@ -287,6 +282,7 @@ func reframePeriods(mpde *mpd.MPD, id string, newStart time.Time) {
 			resultAs = append(resultAs, as)
 		}
 		period.AdaptationSets = resultAs
+
 		// Shift Eventstreams
 		for _, es := range period.EventStream {
 			timescale := uint64(1)
@@ -303,6 +299,7 @@ func reframePeriods(mpde *mpd.MPD, id string, newStart time.Time) {
 
 		}
 	}
+	return mpde
 
 }
 

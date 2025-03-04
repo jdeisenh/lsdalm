@@ -42,7 +42,7 @@ func NewAdaptationSet() *AdaptationSet {
 	}
 }
 
-var noncont = errors.New("Not in Sequence")
+var noncont = errors.New("Not in sequence")
 
 type StreamLooper struct {
 	dumpdir     string
@@ -236,26 +236,26 @@ func (sc *StreamLooper) getLoopMeta(at, now time.Time, requestDuration time.Dura
 }
 
 // AdjustMpd adds a time offset to each Period in the Manifest, shifting the PresentationTime
-func (sc *StreamLooper) AdjustMpd(mpde *mpd.MPD, shift time.Duration) {
+func (sc *StreamLooper) AdjustMpd(mpde *mpd.MPD, shift time.Duration) *mpd.MPD {
 	if len(mpde.Period) == 0 {
-		return
+		return nil
 	}
+	mpdn := new(mpd.MPD)
+	*mpdn = *mpde
+	mpdn.Period = make([]*mpd.Period, 0, 1)
 	for _, period := range mpde.Period {
-		/*
-			Delete?
-			if len(period.BaseURL) > 0 {
-				period.BaseURL[0].Value = sc.rewriteBaseUrl(period.BaseURL[0].Value, sc.sourceUrl)
-			}
-		*/
-
 		// Shift periods
+		np := new(mpd.Period)
+		*np = *period
 		if period.Start != nil {
 			startmed, _ := (*period.Start).ToNanoseconds()
 			start := time.Duration(startmed)
-			*period.Start = DurationToXsdDuration(start + shift)
+			ns := DurationToXsdDuration(start + shift)
+			np.Start = &ns
 		}
+		mpdn.Period = append(mpdn.Period, np)
 	}
-	return
+	return mpdn
 }
 
 // Find a manifest at time 'at'
@@ -313,7 +313,7 @@ func (sc *StreamLooper) filterMpd(mpde *mpd.MPD, from, to time.Time) *mpd.MPD {
 					as.SegmentTemplate,
 					periodStart,
 					func(st time.Time, sd time.Duration) bool {
-						r := !st.Before(from) && !st.After(to)
+						r := !st.Before(from) && !st.Add(sd).After(to)
 						//sc.logger.Info().Msgf("Seg %s %s %v", shortT(t), Round(d), r)
 						return r
 					})
@@ -385,6 +385,10 @@ func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Durati
 	sc.logger.Info().Msgf("Offset: %s TimeShift: %s LoopDuration: %s LoopStart:%s At %s",
 		RoundToS(offset), RoundToS(shift), RoundToS(duration), shortT(startOfRecording), shortT(at))
 	mpdCurrent := sc.BuildMpd()
+	mpdCurrent = sc.AdjustMpd(mpdCurrent, shift) // Manipulate
+	mpdCurrent = sc.filterMpd(mpdCurrent, now.Add(-timeShiftWindowSize), now)
+
+	//mpdCurrent = reframePeriods(mpdCurrent, fmt.Sprintf("Id-%d", shift/duration), startOfRecording.Add(shift).Add(-LoopPointOffset))
 	// re-encode
 	afterEncode, err := mpdCurrent.Encode()
 	if err != nil {
@@ -404,9 +408,9 @@ func (sc *StreamLooper) GetLooped_old(at, now time.Time, requestDuration time.Du
 		return []byte{}, err
 	}
 
-	sc.AdjustMpd(mpdCurrent, shift) // Manipulate
+	mpdCurrent = sc.AdjustMpd(mpdCurrent, shift) // Manipulate
 
-	reframePeriods(mpdCurrent, fmt.Sprintf("Id-%d", shift/duration), startOfRecording.Add(shift).Add(-LoopPointOffset))
+	mpdCurrent = reframePeriods(mpdCurrent, fmt.Sprintf("Id-%d", shift/duration), startOfRecording.Add(shift).Add(-LoopPointOffset))
 	//sc.logger.Info().Msgf("Move period: %s", startOfRecording.Add(shift))
 
 	if offset < timeShiftWindowSize {
@@ -416,7 +420,7 @@ func (sc *StreamLooper) GetLooped_old(at, now time.Time, requestDuration time.Du
 		if duration < timeShiftWindowSize {
 			sc.logger.Error().Msg("unhandled case")
 		} else {
-			sc.AdjustMpd(mpdPrevious, shift-duration) // add Below
+			mpdCurrent = sc.AdjustMpd(mpdPrevious, shift-duration) // add Below
 			loopPoint := startOfRecording.Add(shift).Add(-LoopPointOffset)
 			//sc.logger.Info().Msgf("Loop-point: %s", shortT(loopPoint))
 
@@ -603,8 +607,11 @@ func (as *AdaptationSet) Add(t, d, r int64) error {
 		as.elements = make([]Element, 0, 1000)
 		as.start, as.end = t, t
 	}
-	if t > as.end {
+	if t < as.end {
 		// We ignore smaller ones, not checking if they already exist
+		return nil
+	}
+	if t > as.end {
 		return noncont
 	}
 	if last < 0 || as.elements[last].d != d {
