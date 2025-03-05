@@ -225,7 +225,7 @@ func (re *Recording) getLoopMeta(at, now time.Time, requestDuration time.Duratio
 	// This is inexact, the last might not have all Segments downloaded
 	var end time.Time
 	start, end = re.getRecordingRange()
-	duration = end.Sub(start) / segmentSize * segmentSize
+	duration = end.Sub(start)
 
 	offset = at.Sub(start) % duration
 	shift = now.Add(-offset).Sub(start)
