@@ -209,7 +209,7 @@ func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Durati
 
 	// Check if we are around the loop point
 	var mpdCurrent *mpd.MPD
-	if offset < timeShiftWindowSize {
+	if offset > segmentSize && offset < timeShiftWindowSize {
 		sc.logger.Debug().Msgf("Loop point: %s", shortT(startOfRecording.Add(shift)))
 		mpdPrevious := sc.BuildMpd(
 			shift-duration,
