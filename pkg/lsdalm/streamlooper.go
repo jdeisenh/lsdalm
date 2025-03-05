@@ -79,6 +79,8 @@ func (sc *StreamLooper) mergeMpd(mpd1, mpd2 *mpd.MPD) *mpd.MPD {
 	}
 }
 
+// BuildMpb takes the recordings original mpd and adds Segments for the indicated timestamps range
+// it also shifts the Timeline by 'shift' and assigns a new id
 func (sc *StreamLooper) BuildMpd(shift time.Duration, id string, newstart, from, to time.Time) *mpd.MPD {
 	mpde := sc.recording.originalMpd
 	outMpd := new(mpd.MPD)
@@ -209,7 +211,8 @@ func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Durati
 
 	// Check if we are around the loop point
 	var mpdCurrent *mpd.MPD
-	if offset > segmentSize && offset < timeShiftWindowSize {
+	if offset < timeShiftWindowSize {
+		// We are just after the loop point and have to add date from the previous period
 		sc.logger.Debug().Msgf("Loop point: %s", shortT(startOfRecording.Add(shift)))
 		mpdPrevious := sc.BuildMpd(
 			shift-duration,
@@ -227,6 +230,7 @@ func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Durati
 		)
 		mpdCurrent = sc.mergeMpd(mpdPrevious, mpdCurrent)
 	} else {
+		// No loop point
 		mpdCurrent = sc.BuildMpd(
 			shift,
 			fmt.Sprintf("Id-%d", shift/duration),
