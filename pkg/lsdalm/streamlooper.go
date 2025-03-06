@@ -221,13 +221,16 @@ func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Durati
 			now.Add(-timeShiftWindowSize),
 			startOfRecording.Add(shift),
 		)
-		mpdCurrent = sc.BuildMpd(
-			shift,
-			fmt.Sprintf("Id-%d", shift/duration),
-			startOfRecording.Add(shift),
-			startOfRecording.Add(shift),
-			now,
-		)
+		if offset > segmentSize {
+			// Ensure period not empty
+			mpdCurrent = sc.BuildMpd(
+				shift,
+				fmt.Sprintf("Id-%d", shift/duration),
+				startOfRecording.Add(shift),
+				startOfRecording.Add(shift),
+				now,
+			)
+		}
 		mpdCurrent = sc.mergeMpd(mpdPrevious, mpdCurrent)
 	} else {
 		// No loop point
