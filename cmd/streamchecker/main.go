@@ -11,7 +11,10 @@ import (
 
 func main() {
 
-	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
+	logger := zerolog.New(zerolog.ConsoleWriter{
+		Out:        os.Stderr,
+		TimeFormat: time.TimeOnly,
+	}).With().Timestamp().Logger()
 
 	url := flag.String("url", "", "Channel URL")
 	name := flag.String("name", "default", "Channel ID")
