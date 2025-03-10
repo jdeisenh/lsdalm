@@ -19,8 +19,11 @@ func main() {
 	url := flag.String("url", "", "Channel URL")
 	name := flag.String("name", "default", "Channel ID")
 	debug := flag.Bool("debug", false, "set log level to debug")
-	dump := flag.String("dumpdir", "", "Directory to dump segments")
-	dumpMedia := flag.Bool("dumpmedia", false, "Copy all Media segments")
+	dir := flag.String("dumpdir", "", "Directory to store manifests and segments")
+	accessMedia := flag.Bool("accessmedia", false, "Access all Media segments")
+	//verifyMedia := flag.Bool("verifymedia", false, "Verify all Media segments")
+	storeMedia := flag.Bool("storemedia", false, "Store all Media segments")
+
 	pollTime := flag.Duration("pollInterval", 5*time.Second, "Poll Interval in milliseconds")
 	timeLimit := flag.Duration("timelimit", 0, "Time limit")
 
@@ -36,7 +39,17 @@ func main() {
 		return
 	}
 	var err error
-	sg, err := streamgetter.NewStreamChecker(*name, *url, *dump, *pollTime, *dumpMedia, logger)
+
+	var mode streamgetter.FetchMode
+	switch {
+	// Order is important for precedence
+	case *storeMedia:
+		mode = streamgetter.MODE_STORE
+	//case verifymedia:
+	case *accessMedia:
+		mode = streamgetter.MODE_ACCESS
+	}
+	sg, err := streamgetter.NewStreamChecker(*name, *url, *dir, *pollTime, mode, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Send()
 		return

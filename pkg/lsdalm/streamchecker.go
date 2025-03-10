@@ -22,7 +22,18 @@ const (
 	maxGapLog      = 5 * time.Millisecond           // Warn above this gap length
 	dateShortFmt   = "15:04:05.00"                  // Used in logging dates
 	schemeScteXml  = "urn:scte:scte35:2014:xml+bin" // The one scte scheme we support right now
+	agent          = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 )
+
+// What to do with the media segments
+const (
+	MODE_NOFETCH = iota
+	MODE_ACCESS  // just access
+	//MODE_VERIFY  // get, check timestamps
+	MODE_STORE // plus store
+)
+
+type FetchMode int
 
 type StreamChecker struct {
 	name        string
@@ -34,15 +45,16 @@ type StreamChecker struct {
 	fetchqueue chan *url.URL
 	done       chan struct{}
 	ticker     *time.Ticker
-	dumpMedia  bool
+	fetchMode  FetchMode
 
 	logger zerolog.Logger
+	client *http.Client
 
 	// State
 
 }
 
-func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, dumpMedia bool, logger zerolog.Logger) (*StreamChecker, error) {
+func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, fetchMode FetchMode, logger zerolog.Logger) (*StreamChecker, error) {
 
 	st := &StreamChecker{
 		name:        name,
@@ -52,7 +64,10 @@ func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, du
 		fetchqueue:  make(chan *url.URL, FetchQueueSize),
 		logger:      logger.With().Str("channel", name).Logger(),
 		done:        make(chan struct{}),
-		dumpMedia:   dumpMedia,
+		fetchMode:   fetchMode,
+		client: &http.Client{
+			Transport: &http.Transport{},
+		},
 	}
 	var err error
 	st.sourceUrl, err = url.Parse(source)
@@ -60,8 +75,10 @@ func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, du
 		return nil, err
 	}
 	go st.fetcher()
-	if err := os.MkdirAll(st.manifestDir, 0777); err != nil {
-		return nil, errors.New("Cannot create directory")
+	if dumpdir != "" {
+		if err := os.MkdirAll(st.manifestDir, 0777); err != nil {
+			return nil, errors.New("Cannot create directory")
+		}
 	}
 	return st, nil
 }
@@ -88,18 +105,37 @@ func (sc *StreamChecker) fetchAndStoreSegment(fetchthis *url.URL) error {
 // executeFetchAndStore gets a segment and stores it
 func (sc *StreamChecker) executeFetchAndStore(fetchme *url.URL) error {
 
-	localpath := path.Join(sc.dumpdir, fetchme.Path)
-	os.MkdirAll(path.Dir(localpath), 0777)
-	_, err := os.Stat(localpath)
-	if err == nil {
-		// Assume file exists
-		return nil
+	// Create path
+	localpath := ""
+	if sc.fetchMode >= MODE_STORE {
+		localpath = path.Join(sc.dumpdir, fetchme.Path)
+		os.MkdirAll(path.Dir(localpath), 0777)
+		_, err := os.Stat(localpath)
+		if err == nil {
+			// Assume file exists
+			return nil
+		}
 	}
-	resp, err := http.Get(fetchme.String())
+	mode := "HEAD"
+	if sc.fetchMode > MODE_ACCESS {
+		mode = "GET"
+	}
+	req, err := http.NewRequest(mode, fetchme.String(), nil)
 	if err != nil {
-		sc.logger.Warn().Err(err).Str("url", fetchme.String()).Msg("Fetch Segment")
+		sc.logger.Warn().Err(err).Str("url", fetchme.String()).Msg("Create Request")
+		// Handle error
 		return err
 	}
+
+	req.Header.Set("User-Agent", agent)
+
+	resp, err := sc.client.Do(req)
+	if err != nil {
+		sc.logger.Warn().Err(err).Str("url", fetchme.String()).Msg("Fetch Segment")
+		// Handle error
+		return err
+	}
+
 	if resp.Body != nil {
 		defer resp.Body.Close()
 	}
@@ -113,10 +149,12 @@ func (sc *StreamChecker) executeFetchAndStore(fetchme *url.URL) error {
 		return errors.New("Not successful")
 	}
 	sc.logger.Debug().Str("Segment", fetchme.String()).Msg("Got")
-	err = os.WriteFile(localpath, body, 0644)
-	if err != nil {
-		sc.logger.Error().Err(err).Str("Path", localpath).Msg("Write Segment Data")
-		return err
+	if sc.dumpdir != "" && sc.fetchMode >= MODE_STORE {
+		err = os.WriteFile(localpath, body, 0644)
+		if err != nil {
+			sc.logger.Error().Err(err).Str("Path", localpath).Msg("Write Segment Data")
+			return err
+		}
 	}
 	return nil
 }
@@ -125,9 +163,18 @@ func (sc *StreamChecker) executeFetchAndStore(fetchme *url.URL) error {
 // callback on all Segments
 func (sc *StreamChecker) fetchAndStoreManifest() error {
 
-	resp, err := http.Get(sc.sourceUrl.String())
+	req, err := http.NewRequest("GET", sc.sourceUrl.String(), nil)
 	if err != nil {
-		sc.logger.Error().Err(err).Str("source", sc.sourceUrl.String()).Msg("Get Manifest")
+		sc.logger.Warn().Err(err).Str("url", sc.sourceUrl.String()).Msg("Create Request")
+		// Handle error
+		return err
+	}
+
+	req.Header.Set("User-Agent", agent)
+
+	resp, err := sc.client.Do(req)
+	if err != nil {
+		sc.logger.Error().Err(err).Str("source", sc.sourceUrl.String()).Msg("Do Manifest Request")
 		return err
 	}
 	if resp.Body != nil {
@@ -185,7 +232,7 @@ func (sc *StreamChecker) fetchAndStoreManifest() error {
 		return err
 	}
 	err = sc.walkMpd(mpd)
-	if sc.dumpdir != "" && sc.dumpMedia {
+	if sc.fetchMode > MODE_NOFETCH {
 		err = onAllSegmentUrls(mpd, sc.sourceUrl, sc.fetchAndStoreSegment)
 	}
 	return err
