@@ -8,10 +8,12 @@ import (
 	"os"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jdeisenh/lsdalm/pkg/go-mpd"
 	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
 type StreamReplay struct {
@@ -127,8 +129,29 @@ func (sc *StreamReplay) getLoopMeta(at, now time.Time, requestDuration time.Dura
 	return
 }
 
+// baseToPath converts a Base URL to a absolute local path
+func baseToPath(base, prefix string) string {
+	if prefix == "" {
+		// No change
+		return base
+	}
+	var baseurl *url.URL
+	var err error
+	baseurl, err = url.Parse(base)
+	if err != nil {
+		log.Warn().Err(err).Msg("Parse URL")
+		return base
+	}
+	if strings.HasPrefix(baseurl.Path, "/") {
+		// Path only
+		return baseurl.Path
+	} else {
+		return path.Join(prefix, baseurl.Path)
+	}
+}
+
 // AdjustMpd adds a time offset to each Period in the Manifest, shifting the PresentationTime
-func (sc *StreamReplay) AdjustMpd(mpde *mpd.MPD, shift time.Duration) {
+func (sc *StreamReplay) AdjustMpd(mpde *mpd.MPD, shift time.Duration, replaceBase string) {
 	if len(mpde.Period) == 0 {
 		return
 	}
@@ -139,6 +162,10 @@ func (sc *StreamReplay) AdjustMpd(mpde *mpd.MPD, shift time.Duration) {
 			startmed, _ := (*period.Start).ToNanoseconds()
 			start := time.Duration(startmed)
 			*period.Start = DurationToXsdDuration(start + shift)
+		}
+		if replaceBase != "" && len(period.BaseURL) > 0 {
+			period.BaseURL[0].Value = baseToPath(period.BaseURL[0].Value, replaceBase)
+
 		}
 	}
 	return
@@ -174,7 +201,7 @@ func (sc *StreamReplay) GetLooped(at, now time.Time, requestDuration time.Durati
 		return []byte{}, err
 	}
 
-	sc.AdjustMpd(mpdCurrent, shift) // Manipulate
+	sc.AdjustMpd(mpdCurrent, shift, "/") // Manipulate
 
 	//sc.logger.Info().Msgf("Move period: %s", startOfRecording.Add(shift))
 
@@ -283,7 +310,6 @@ func (sc *StreamReplay) Handler(w http.ResponseWriter, r *http.Request) {
 
 // FileHanlder serves data
 func (sc *StreamReplay) FileHandler(w http.ResponseWriter, r *http.Request) {
-	//urlpath := strings.TrimPrefix(r.URL.Path, "/dash/")
 	filepath := path.Join(sc.dumpdir, r.URL.Path)
 	sc.logger.Trace().Str("path", filepath).Msg("Access")
 	http.ServeFile(w, r, filepath)
@@ -301,18 +327,4 @@ func (sc *StreamReplay) ShowStats() {
 		)
 	}
 
-}
-
-// rewriteBaseUrl will return a URL concatenating upstream with base
-func (sc *StreamReplay) rewriteBaseUrl(base string, upstream *url.URL) string {
-	// Check for relative URL
-	ur, e := url.Parse(base)
-	if e != nil {
-		sc.logger.Warn().Err(e).Msg("URL parsing")
-		return base
-	}
-	if ur.IsAbs() {
-		return base
-	}
-	return upstream.ResolveReference(ur).String()
 }

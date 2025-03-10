@@ -3,7 +3,6 @@ package streamgetter
 import (
 	"fmt"
 	"net/http"
-	"net/url"
 	"path"
 	"strconv"
 	"time"
@@ -325,18 +324,4 @@ func (sc *StreamLooper) FileHandler(w http.ResponseWriter, r *http.Request) {
 	filepath := path.Join(sc.dumpdir, r.URL.Path)
 	sc.logger.Trace().Str("path", filepath).Msg("Access")
 	http.ServeFile(w, r, filepath)
-}
-
-// rewriteBaseUrl will return a URL concatenating upstream with base
-func (sc *StreamLooper) rewriteBaseUrl(base string, upstream *url.URL) string {
-	// Check for relative URL
-	ur, e := url.Parse(base)
-	if e != nil {
-		sc.logger.Warn().Err(e).Msg("URL parsing")
-		return base
-	}
-	if ur.IsAbs() {
-		return base
-	}
-	return upstream.ResolveReference(ur).String()
 }
