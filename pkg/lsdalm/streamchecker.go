@@ -51,7 +51,7 @@ type StreamChecker struct {
 	client *http.Client
 
 	// State
-
+	initialPeriod *mpd.Period
 }
 
 func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, fetchMode FetchMode, logger zerolog.Logger) (*StreamChecker, error) {
@@ -238,6 +238,7 @@ func (sc *StreamChecker) fetchAndStoreManifest() error {
 	return err
 }
 
+// ZeroIfNil is a short hand to evaluate a *uint64
 func ZeroIfNil(in *uint64) uint64 {
 	if in == nil {
 		return 0
@@ -245,6 +246,7 @@ func ZeroIfNil(in *uint64) uint64 {
 	return *in
 }
 
+// EmptyIfNil is a short hand to evaluate a string pointer
 func EmptyIfNil(in *string) string {
 	if in == nil {
 		return ""
@@ -293,18 +295,17 @@ func (sc *StreamChecker) walkMpd(mpde *mpd.MPD) error {
 		_ = periodStart
 	}
 
-	// TODO: Choose best period for adaptationSet Reference
-	referencePeriod := mpde.Period[0]
-	// Choose one with Period-AdaptationSet->SegmentTemplate, which in our case is
-	// usually the live period
-	for _, period := range mpde.Period {
-		if len(period.AdaptationSets) == 0 {
-			continue
-		}
+	// Safe the first period (or should it be last) as a reference
+	if sc.initialPeriod == nil {
+		for _, period := range mpde.Period {
+			if len(period.AdaptationSets) == 0 {
+				continue
+			}
 
-		if period.AdaptationSets[0].SegmentTemplate != nil {
-			referencePeriod = period
-			break
+			if period.AdaptationSets[0].SegmentTemplate != nil {
+				sc.initialPeriod = period
+				break
+			}
 		}
 	}
 	// Walk all AdaptationSets, Periods, and Representations
@@ -313,66 +314,74 @@ func (sc *StreamChecker) walkMpd(mpde *mpd.MPD) error {
 	// and try to match all others to that
 	var theGap time.Time
 ASloop:
-	for asRefId, asRef := range referencePeriod.AdaptationSets {
+	for asRefId, asRef := range sc.initialPeriod.AdaptationSets {
 		msg := ""
 		for periodIdx, period := range mpde.Period {
 			// Find the adaptationset matching the reference adaptationset
 			if len(period.AdaptationSets) == 0 {
 				continue
 			}
+			sc.logger.Trace().Msgf("Searching %s/%s in period %d ", asRef.MimeType, EmptyIfNil(asRef.Codecs), periodIdx)
 			// Find an AdaptationSet that matches the AS in the reference period
 			// Default is first if not found
 			var as *mpd.AdaptationSet
 			for asfi, asfinder := range period.AdaptationSets {
+				// This logic is imcomplete. If the codec is in the representation, it should match it instead of mismatching to the wrong track
 				if asRef.MimeType == asfinder.MimeType && (asRef.Codecs == nil || asfinder.Codecs == nil || *asRef.Codecs == *asfinder.Codecs) {
-					sc.logger.Trace().Msgf("Mime-Type %s found in asi %d", asfinder.MimeType, asfi)
+					sc.logger.Trace().Msgf("Mime-Type %s/%s found in p %d asi %d", asfinder.MimeType, EmptyIfNil(asfinder.Codecs), periodIdx, asfi)
 					as = asfinder
+					break
 				}
 			}
 			if as == nil {
 				sc.logger.Debug().Msgf("Mime-Type %s not found in asi %d", asRef.MimeType, asRefId)
-				msg += " N/A "
-				continue
+				msg += " [missing] "
 
-			}
-			// If there is no segmentTimeline, skip it
-			if as.SegmentTemplate == nil || as.SegmentTemplate.SegmentTimeline == nil || len(as.SegmentTemplate.SegmentTimeline.S) == 0 {
-				continue ASloop
-			}
+			} else {
+				segTemp := as.SegmentTemplate
+				if segTemp == nil && len(as.Representations) > 0 {
+					// Use the first SegTemplate of the Representation
+					segTemp = as.Representations[0].SegmentTemplate
+				}
 
-			// Calculate period start
-			var start time.Duration
-			if period.Start != nil {
-				startmed, _ := (*period.Start).ToNanoseconds()
-				start = time.Duration(startmed)
-			}
-			periodStart := ast.Add(start)
-			from, to := sumSegmentTemplate(as.SegmentTemplate, periodStart)
-			if from.IsZero() {
-				for _, pres := range as.Representations {
-					if pres.SegmentTemplate != nil {
-						from, to = sumSegmentTemplate(pres.SegmentTemplate, periodStart)
-						break
+				// If there is no segmentTimeline, skip it
+				if segTemp == nil || segTemp.SegmentTimeline == nil || len(segTemp.SegmentTimeline.S) == 0 {
+					continue ASloop
+				}
+				// Calculate period start
+				var start time.Duration
+				if period.Start != nil {
+					startmed, _ := (*period.Start).ToNanoseconds()
+					start = time.Duration(startmed)
+				}
+				periodStart := ast.Add(start)
+				from, to := sumSegmentTemplate(segTemp, periodStart)
+				if from.IsZero() {
+					for _, pres := range as.Representations {
+						if pres.SegmentTemplate != nil {
+							from, to = sumSegmentTemplate(pres.SegmentTemplate, periodStart)
+							break
+						}
 					}
 				}
-			}
-			if periodIdx == 0 {
-				// Line start: mimetype+codec, timeshiftBufferDepth
-				codecs := ""
-				if as.Codecs != nil {
-					codecs = "/" + *asRef.Codecs
+				if periodIdx == 0 {
+					// Line start: mimetype+codec, timeshiftBufferDepth
+					codecs := ""
+					if as.Codecs != nil {
+						codecs = "/" + *asRef.Codecs
+					}
+					msg = fmt.Sprintf("%30s: %8s", asRef.MimeType+codecs, RoundTo(now.Sub(from), time.Second))
+				} else if gap := from.Sub(theGap); gap > maxGapLog || gap < -maxGapLog {
+					msg += fmt.Sprintf("GAP: %s", Round(gap))
 				}
-				msg = fmt.Sprintf("%30s: %8s", asRef.MimeType+codecs, RoundTo(now.Sub(from), time.Second))
-			} else if gap := from.Sub(theGap); gap > maxGapLog || gap < -maxGapLog {
-				msg += fmt.Sprintf("GAP: %s", Round(gap))
-			}
 
-			msg += fmt.Sprintf(" [%s-(%7s)-%s[", from.Format(dateShortFmt), Round(to.Sub(from)), to.Format(dateShortFmt))
+				msg += fmt.Sprintf(" [%s-(%7s)-%s[", from.Format(dateShortFmt), Round(to.Sub(from)), to.Format(dateShortFmt))
 
-			if periodIdx == len(mpde.Period)-1 {
-				msg += fmt.Sprintf(" %.1fs", float64(now.Sub(to)/(time.Second/10))/10.0) // Live edge distance
+				if periodIdx == len(mpde.Period)-1 {
+					msg += fmt.Sprintf(" %.1fs", float64(now.Sub(to)/(time.Second/10))/10.0) // Live edge distance
+				}
+				theGap = to
 			}
-			theGap = to
 		}
 		sc.logger.Info().Msg(msg) // Write the assembled status line
 	}
