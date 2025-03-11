@@ -20,6 +20,7 @@ func main() {
 	debug := flag.Bool("debug", false, "set log level to debug")
 	dump := flag.String("dumpdir", "", "Directory to dump segments")
 	listen := flag.String("listen", ":9080", "Adress/port to listen")
+	baseurl := flag.String("baseurl", "", "Base URL for media segments")
 
 	flag.Parse()
 
@@ -33,7 +34,7 @@ func main() {
 		return
 	}
 	var err error
-	sg, err := streamgetter.NewStreamReplay(*dump, logger)
+	sg, err := streamgetter.NewStreamReplay(*dump, *baseurl, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Send()
 		return

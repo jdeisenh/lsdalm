@@ -19,19 +19,25 @@ import (
 type StreamReplay struct {
 	dumpdir     string
 	manifestDir string
+	baseurl     *url.URL
 
 	logger                   zerolog.Logger
 	history                  []HistoryElement
 	historyStart, historyEnd time.Time
 }
 
-func NewStreamReplay(dumpdir string, logger zerolog.Logger) (*StreamReplay, error) {
+func NewStreamReplay(dumpdir, baseurl string, logger zerolog.Logger) (*StreamReplay, error) {
 
 	st := &StreamReplay{
 		dumpdir:     dumpdir,
 		manifestDir: path.Join(dumpdir, ManifestPath),
 		logger:      logger,
 		history:     make([]HistoryElement, 0, 1000),
+	}
+	var err error
+	st.baseurl, err = url.Parse(baseurl)
+	if err != nil {
+		return nil, err
 	}
 	st.fillData()
 	if len(st.history) < 10 {
@@ -163,12 +169,34 @@ func (sc *StreamReplay) AdjustMpd(mpde *mpd.MPD, shift time.Duration, replaceBas
 			start := time.Duration(startmed)
 			*period.Start = DurationToXsdDuration(start + shift)
 		}
-		if replaceBase != "" && len(period.BaseURL) > 0 {
-			period.BaseURL[0].Value = baseToPath(period.BaseURL[0].Value, replaceBase)
+		if sc.baseurl.String() != "" {
+			period.BaseURL[0].Value = ConcatURL(sc.baseurl, period.BaseURL[0].Value).String()
+		} else {
+			if replaceBase != "" && len(period.BaseURL) > 0 {
+				period.BaseURL[0].Value = baseToPath(period.BaseURL[0].Value, replaceBase)
 
+			}
 		}
 	}
 	return
+}
+
+// Concatenat URLs
+// If b is absolute, just use this
+// if not, append
+func ConcatURL(a *url.URL, br string) *url.URL {
+	b, err := url.Parse(br)
+	if err != nil {
+		log.Error().Err(err).Msg("Path extension")
+		return nil
+	}
+	if b.IsAbs() {
+		return b
+	} else {
+		// Cut to directory, extend by base path
+		joined := a.JoinPath(b.Path)
+		return joined
+	}
 }
 
 // Find a manifest at time 'at'
@@ -272,9 +300,24 @@ func (sc *StreamReplay) Handler(w http.ResponseWriter, r *http.Request) {
 	var duration time.Duration
 
 	// Parse time from query Args
+	qm := r.URL.Query()
 
+	if len(qm["to"]) == 0 && len(qm["at"]) > 0 {
+		at := qm["at"][0]
+		t, err := strconv.Atoi(at)
+		if err != nil {
+			sc.logger.Warn().Err(err).Msg("Parse time")
+		} else if t < 1e6 && t > 3e6 {
+			sc.logger.Warn().Msg("Implausable time , ignoring")
+		} else {
+			atime := time.Unix(int64(t), 0)
+			sc.logger.Info().Msgf("Redirecting to time %s", atime)
+			http.Redirect(w, r, fmt.Sprintf("/manifest.mpd?to=%d", time.Since(atime)/time.Second), http.StatusSeeOther)
+			return
+		}
+	}
 	// to timeoffset
-	ts := r.URL.Query()["to"]
+	ts := qm["to"]
 	if len(ts) > 0 {
 		t, err := strconv.Atoi(ts[0])
 		if err != nil {
@@ -285,20 +328,20 @@ func (sc *StreamReplay) Handler(w http.ResponseWriter, r *http.Request) {
 			startat = startat.Add(-time.Duration(t) * time.Second)
 		}
 	}
-
-	// ld loop duration
-	ld := r.URL.Query()["ld"]
-	if len(ld) > 0 {
-		t, err := strconv.Atoi(ld[0])
-		if err != nil {
-			sc.logger.Warn().Err(err).Msg("Parse time")
-		} else if t <= 0 && t > 1e5 {
-			sc.logger.Warn().Msg("Implausable duration, ignoring")
-		} else {
-			duration = time.Duration(t) * time.Second
+	/*
+		// ld loop duration
+		ld := qm["ld"]
+		if len(ld) > 0 {
+			t, err := strconv.Atoi(ld[0])
+			if err != nil {
+				sc.logger.Warn().Err(err).Msg("Parse time")
+			} else if t <= 0 && t > 1e5 {
+				sc.logger.Warn().Msg("Implausable duration, ignoring")
+			} else {
+				duration = time.Duration(t) * time.Second
+			}
 		}
-	}
-
+	*/
 	buf, err := sc.GetLooped(startat, now, duration)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
