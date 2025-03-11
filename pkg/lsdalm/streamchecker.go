@@ -51,7 +51,8 @@ type StreamChecker struct {
 	client *http.Client
 
 	// State
-	initialPeriod *mpd.Period
+	initialPeriod   *mpd.Period
+	upcomingSplices SpliceList
 }
 
 func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, fetchMode FetchMode, logger zerolog.Logger) (*StreamChecker, error) {
@@ -289,7 +290,12 @@ func (sc *StreamChecker) walkMpd(mpde *mpd.MPD) error {
 				duration := ZeroIfNil(event.Duration)
 				pt := ZeroIfNil(event.PresentationTime)
 				// signal, content
-				sc.logger.Info().Msgf("SCTE35 Id: %d Duration: %s Time %s", event.Id, TLP2Duration(int64(duration), timescale), periodStart.Add(TLP2Duration(int64(pt-pto), timescale)))
+				wallSpliceStart := periodStart.Add(TLP2Duration(int64(pt-pto), timescale))
+				wallSpliceDuration := TLP2Duration(int64(duration), timescale)
+				sc.logger.Info().Msgf("SCTE35 Id: %d Duration: %s Time %s", event.Id, wallSpliceDuration, shortT(wallSpliceStart))
+				// store
+				sc.upcomingSplices.AddIfNew(wallSpliceStart)
+				sc.upcomingSplices.AddIfNew(wallSpliceStart.Add(wallSpliceDuration))
 			}
 		}
 		_ = periodStart
@@ -363,6 +369,21 @@ ASloop:
 							break
 						}
 					}
+				}
+				for _, sp := range sc.upcomingSplices.InRange(from, to) {
+					//sc.logger.Info().Msgf("Found splice at %s", shortT(sp))
+					walkSegmentTemplateTimings(segTemp, periodStart, func(t time.Time, d time.Duration) {
+						if !sp.Before(t) && sp.Before(t.Add(d)) {
+							offset := sp.Sub(t)
+							if offset > d/2 {
+								sc.logger.Info().Msgf("Early %s to %s Len %s", RoundTo(d-offset, time.Millisecond), shortT(t.Add(d)), d)
+							} else if offset != 0 {
+								sc.logger.Info().Msgf("Late  %s to %s Len %s", RoundTo(offset, time.Millisecond), shortT(t), d)
+							} else {
+								sc.logger.Info().Msgf("Exactly at %s Len %s", shortT(t), d)
+							}
+						}
+					})
 				}
 				if periodIdx == 0 {
 					// Line start: mimetype+codec, timeshiftBufferDepth

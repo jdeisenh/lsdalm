@@ -133,6 +133,34 @@ func sumSegmentTemplate(st *mpd.SegmentTemplate, periodStart time.Time) (from, t
 	return
 }
 
+// sumSegmentTemplate returns first and last presentationTime of a SegmentTemplate with Timeline
+func walkSegmentTemplateTimings(st *mpd.SegmentTemplate, periodStart time.Time, action func(time.Time, time.Duration)) {
+
+	if st == nil {
+		return
+	}
+	var pto uint64
+	if st.PresentationTimeOffset != nil {
+		pto = *st.PresentationTimeOffset
+	}
+	stl := st.SegmentTimeline
+	if stl == nil {
+		return
+	}
+	//fmt.Printf("SegmentTemplate: %+v\n", st)
+	timescale := uint64(1)
+	if st.Timescale != nil {
+		timescale = *st.Timescale
+	}
+	for t, d := range All(stl) {
+		action(
+			periodStart.Add(TLP2Duration(int64(t-pto), timescale)),
+			TLP2Duration(int64(d), timescale),
+		)
+	}
+	return
+}
+
 // Build a fetch base URL from manifest URL, and basepath in period
 func segmentPathFromPeriod(period *mpd.Period, mpdUrl *url.URL) *url.URL {
 	var segmentPath, baseurl *url.URL
