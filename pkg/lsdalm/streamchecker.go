@@ -17,13 +17,13 @@ import (
 )
 
 const (
-	ManifestPath   = "manifests"
-	ManifestFormat = "manifest-2006-01-02T15:04:05Z.mpd"
-	FetchQueueSize = 5000                           // Max number of outstanding requests in queue
-	maxGapLog      = 5 * time.Millisecond           // Warn above this gap length
-	dateShortFmt   = "15:04:05.00"                  // Used in logging dates
-	schemeScteXml  = "urn:scte:scte35:2014:xml+bin" // The one scte scheme we support right now
-	agent          = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+	ManifestPath     = "manifests"
+	ManifestFormat   = "manifest-2006-01-02T15:04:05Z.mpd"
+	FetchQueueSize   = 5000                           // Max number of outstanding requests in queue
+	maxGapLog        = 5 * time.Millisecond           // Warn above this gap length
+	dateShortFmt     = "15:04:05.00"                  // Used in logging dates
+	schemeScteXml    = "urn:scte:scte35:2014:xml+bin" // The one scte scheme we support right now
+	DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 )
 
 // What to do with the media segments
@@ -41,6 +41,7 @@ type StreamChecker struct {
 	sourceUrl   *url.URL
 	dumpdir     string
 	manifestDir string
+	userAgent   string
 	// Duration for manifests
 	updateFreq time.Duration
 	fetchqueue chan *url.URL
@@ -73,7 +74,8 @@ func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, fe
 		client: &http.Client{
 			Transport: &http.Transport{},
 		},
-		haveMap: make(map[string]bool),
+		haveMap:   make(map[string]bool),
+		userAgent: DefaultUserAgent,
 	}
 	var err error
 	st.sourceUrl, err = url.Parse(source)
@@ -152,7 +154,7 @@ func (sc *StreamChecker) executeFetchAndStore(fetchme *url.URL) error {
 		return err
 	}
 
-	req.Header.Set("User-Agent", agent)
+	req.Header.Set("User-Agent", sc.userAgent)
 
 	resp, err := sc.client.Do(req)
 	if err != nil {
@@ -195,7 +197,7 @@ func (sc *StreamChecker) fetchAndStoreManifest() error {
 		return err
 	}
 
-	req.Header.Set("User-Agent", agent)
+	req.Header.Set("User-Agent", sc.userAgent)
 
 	resp, err := sc.client.Do(req)
 	if err != nil {
