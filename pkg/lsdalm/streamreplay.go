@@ -1,6 +1,7 @@
 package streamgetter
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -17,16 +18,17 @@ import (
 )
 
 type StreamReplay struct {
-	dumpdir     string
-	manifestDir string
-	baseurl     *url.URL
+	dumpdir             string
+	manifestDir         string
+	originalManifestUrl *url.URL
+	storageMeta         StorageMeta
 
 	logger                   zerolog.Logger
 	history                  []HistoryElement
 	historyStart, historyEnd time.Time
 }
 
-func NewStreamReplay(dumpdir, baseurl string, logger zerolog.Logger) (*StreamReplay, error) {
+func NewStreamReplay(dumpdir string, logger zerolog.Logger) (*StreamReplay, error) {
 
 	st := &StreamReplay{
 		dumpdir:     dumpdir,
@@ -34,10 +36,21 @@ func NewStreamReplay(dumpdir, baseurl string, logger zerolog.Logger) (*StreamRep
 		logger:      logger,
 		history:     make([]HistoryElement, 0, 1000),
 	}
-	var err error
-	st.baseurl, err = url.Parse(baseurl)
+
+	metapath := path.Join(dumpdir, StorageMetaFileName)
+	mf, err := os.ReadFile(metapath)
 	if err != nil {
-		return nil, err
+		logger.Warn().Err(err).Str("filename", metapath).Msg("Read Metadata")
+	} else {
+		err = json.Unmarshal(mf, &st.storageMeta)
+		if err != nil {
+			logger.Warn().Err(err).Str("filename", metapath).Msg("Decode Metadata")
+		}
+
+		st.originalManifestUrl, err = url.Parse(st.storageMeta.ManifestUrl)
+		if err != nil {
+			return nil, err
+		}
 	}
 	st.fillData()
 	if len(st.history) < 10 {
@@ -157,7 +170,7 @@ func baseToPath(base, prefix string) string {
 }
 
 // AdjustMpd adds a time offset to each Period in the Manifest, shifting the PresentationTime
-func (sc *StreamReplay) AdjustMpd(mpde *mpd.MPD, shift time.Duration, replaceBase string) {
+func (sc *StreamReplay) AdjustMpd(mpde *mpd.MPD, shift time.Duration, localMedia bool) {
 	if len(mpde.Period) == 0 {
 		return
 	}
@@ -169,12 +182,15 @@ func (sc *StreamReplay) AdjustMpd(mpde *mpd.MPD, shift time.Duration, replaceBas
 			start := time.Duration(startmed)
 			*period.Start = DurationToXsdDuration(start + shift)
 		}
-		if sc.baseurl.String() != "" {
-			period.BaseURL[0].Value = ConcatURL(sc.baseurl, period.BaseURL[0].Value).String()
-		} else {
-			if replaceBase != "" && len(period.BaseURL) > 0 {
-				period.BaseURL[0].Value = baseToPath(period.BaseURL[0].Value, replaceBase)
+		// Expand to full URL first
+		if len(period.BaseURL) > 0 && period.BaseURL[0].Value != "" {
+			baseurl := period.BaseURL[0].Value
+			baseurlUrl := ConcatURL(sc.originalManifestUrl, baseurl)
+			if localMedia {
 
+				period.BaseURL[0].Value = baseurlUrl.Path[1:]
+			} else {
+				period.BaseURL[0].Value = baseurlUrl.String()
 			}
 		}
 	}
@@ -229,7 +245,7 @@ func (sc *StreamReplay) GetLooped(at, now time.Time, requestDuration time.Durati
 		return []byte{}, err
 	}
 
-	sc.AdjustMpd(mpdCurrent, shift, "/") // Manipulate
+	sc.AdjustMpd(mpdCurrent, shift, sc.storageMeta.HaveMedia) // Manipulate
 
 	//sc.logger.Info().Msgf("Move period: %s", startOfRecording.Add(shift))
 
@@ -363,6 +379,7 @@ func (sc *StreamReplay) ShowStats() {
 	if len(sc.history) > 0 {
 		first := sc.history[0].At
 		last := sc.history[len(sc.history)-1].At
+		sc.logger.Info().Msgf("Original source: %s", sc.originalManifestUrl)
 		sc.logger.Info().Msgf("Recorded %d manifests from %s to %s (%s)",
 			len(sc.history),
 			first.Format(time.TimeOnly),
