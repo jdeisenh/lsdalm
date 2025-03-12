@@ -302,6 +302,7 @@ func (sc *StreamReplay) Handler(w http.ResponseWriter, r *http.Request) {
 	// Parse time from query Args
 	qm := r.URL.Query()
 
+	// If only "at" is given: Calculte to as difference to Now() and redirect
 	if len(qm["to"]) == 0 && len(qm["at"]) > 0 {
 		at := qm["at"][0]
 		t, err := strconv.Atoi(at)

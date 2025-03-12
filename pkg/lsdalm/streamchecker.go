@@ -87,9 +87,22 @@ func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, fe
 		go st.fetcher()
 	}
 	if dumpdir != "" {
+		type StorageMeta struct {
+			ManifestUrl string
+		}
 		if err := os.MkdirAll(st.manifestDir, 0777); err != nil {
 			return nil, errors.New("Cannot create directory")
 		}
+		m := StorageMeta{ManifestUrl: st.sourceUrl.String()}
+		metaJson, err := json.Marshal(m)
+		if err != nil {
+			return st, err
+		}
+		err = os.WriteFile(path.Join(st.dumpdir, "meta.json"), metaJson, 0666)
+		if err != nil {
+			return st, err
+		}
+
 	}
 	return st, nil
 }
