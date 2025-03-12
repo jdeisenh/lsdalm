@@ -18,10 +18,10 @@ import (
 )
 
 type StreamReplay struct {
-	dumpdir             string
-	manifestDir         string
-	originalManifestUrl *url.URL
-	storageMeta         StorageMeta
+	dumpdir         string
+	manifestDir     string
+	originalBaseUrl *url.URL
+	storageMeta     StorageMeta
 
 	logger                   zerolog.Logger
 	history                  []HistoryElement
@@ -47,10 +47,11 @@ func NewStreamReplay(dumpdir string, logger zerolog.Logger) (*StreamReplay, erro
 			logger.Warn().Err(err).Str("filename", metapath).Msg("Decode Metadata")
 		}
 
-		st.originalManifestUrl, err = url.Parse(st.storageMeta.ManifestUrl)
+		st.originalBaseUrl, err = url.Parse(st.storageMeta.ManifestUrl)
 		if err != nil {
 			return nil, err
 		}
+		st.originalBaseUrl.Path = path.Dir(st.originalBaseUrl.Path)
 	}
 	st.fillData()
 	if len(st.history) < 10 {
@@ -183,9 +184,9 @@ func (sc *StreamReplay) AdjustMpd(mpde *mpd.MPD, shift time.Duration, localMedia
 			*period.Start = DurationToXsdDuration(start + shift)
 		}
 		// Expand to full URL first
-		if len(period.BaseURL) > 0 && period.BaseURL[0].Value != "" {
+		if sc.originalBaseUrl != nil && len(period.BaseURL) > 0 && period.BaseURL[0].Value != "" {
 			baseurl := period.BaseURL[0].Value
-			baseurlUrl := ConcatURL(sc.originalManifestUrl, baseurl)
+			baseurlUrl := ConcatURL(sc.originalBaseUrl, baseurl)
 			if localMedia {
 
 				period.BaseURL[0].Value = baseurlUrl.Path[1:]
@@ -379,7 +380,7 @@ func (sc *StreamReplay) ShowStats() {
 	if len(sc.history) > 0 {
 		first := sc.history[0].At
 		last := sc.history[len(sc.history)-1].At
-		sc.logger.Info().Msgf("Original source: %s", sc.originalManifestUrl)
+		sc.logger.Info().Msgf("Original source: %s", sc.storageMeta.ManifestUrl)
 		sc.logger.Info().Msgf("Recorded %d manifests from %s to %s (%s)",
 			len(sc.history),
 			first.Format(time.TimeOnly),
