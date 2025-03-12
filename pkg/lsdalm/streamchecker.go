@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"sync"
 	"time"
 
 	"github.com/jdeisenh/lsdalm/pkg/go-mpd"
@@ -18,7 +19,7 @@ import (
 const (
 	ManifestPath   = "manifests"
 	ManifestFormat = "manifest-2006-01-02T15:04:05Z.mpd"
-	FetchQueueSize = 2000                           // Max number of outstanding requests in queue
+	FetchQueueSize = 5000                           // Max number of outstanding requests in queue
 	maxGapLog      = 5 * time.Millisecond           // Warn above this gap length
 	dateShortFmt   = "15:04:05.00"                  // Used in logging dates
 	schemeScteXml  = "urn:scte:scte35:2014:xml+bin" // The one scte scheme we support right now
@@ -50,12 +51,15 @@ type StreamChecker struct {
 	logger zerolog.Logger
 	client *http.Client
 
+	haveMutex sync.Mutex
+	haveMap   map[string]bool
+
 	// State
 	initialPeriod   *mpd.Period
 	upcomingSplices SpliceList
 }
 
-func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, fetchMode FetchMode, logger zerolog.Logger) (*StreamChecker, error) {
+func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, fetchMode FetchMode, logger zerolog.Logger, workers int) (*StreamChecker, error) {
 
 	st := &StreamChecker{
 		name:        name,
@@ -69,13 +73,17 @@ func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, fe
 		client: &http.Client{
 			Transport: &http.Transport{},
 		},
+		haveMap: make(map[string]bool),
 	}
 	var err error
 	st.sourceUrl, err = url.Parse(source)
 	if err != nil {
 		return nil, err
 	}
-	go st.fetcher()
+	// Start workers
+	for w := 0; w < workers; w++ {
+		go st.fetcher()
+	}
 	if dumpdir != "" {
 		if err := os.MkdirAll(st.manifestDir, 0777); err != nil {
 			return nil, errors.New("Cannot create directory")
@@ -87,15 +95,31 @@ func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, fe
 // fetchAndStoreSegment queues an URL for fetching
 func (sc *StreamChecker) fetchAndStoreSegment(fetchthis *url.URL) error {
 
+	// Check what we already have.
+	// This does not handle errors, retries, everything else
+	sc.haveMutex.Lock()
+	if _, ok := sc.haveMap[fetchthis.Path]; ok {
+		sc.haveMutex.Unlock()
+		// Don't fetch again
+		sc.logger.Trace().Msgf("Already in queue%s", fetchthis.Path)
+		return nil
+	}
+	sc.haveMutex.Unlock()
+
 	localpath := path.Join(sc.dumpdir, fetchthis.Path)
 	_, err := os.Stat(localpath)
 	if err == nil {
 		// Assume file exists
+		sc.logger.Debug().Msgf("Have file %s", fetchthis.Path)
 		return nil
 	}
+	sc.logger.Debug().Int("QL", len(sc.fetchqueue)).Msg("Queue size")
 	// Queue request
 	select {
 	case sc.fetchqueue <- fetchthis:
+		sc.haveMutex.Lock()
+		sc.haveMap[fetchthis.Path] = true
+		sc.haveMutex.Unlock()
 		return nil
 	default:
 		sc.logger.Error().Msg("Queue full")
@@ -452,6 +476,10 @@ func (sc *StreamChecker) fetcher() {
 			// Exit signal
 			break
 		}
+		sc.haveMutex.Lock()
+		delete(sc.haveMap, i.Path)
+		sc.haveMutex.Unlock()
+
 		sc.executeFetchAndStore(i)
 	}
 	sc.logger.Debug().Msg("Close Fetcher")

@@ -149,7 +149,7 @@ func (sc *StreamLooper) BuildMpd(shift time.Duration, id string, newstart, from,
 						t = uint64(start)
 						first = false
 					}
-					AppendR(nstl, t, uint64(s.d), 0)
+					Append(nstl, t, uint64(s.d), 0)
 				}
 				start += s.d
 			}

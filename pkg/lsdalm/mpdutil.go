@@ -52,9 +52,9 @@ func All(stl *mpd.SegmentTimeline) func(func(t, d uint64) bool) {
 	}
 }
 
-// AppendR adds a segemnt to a SegmentTimeline
+// Append adds a segment to a SegmentTimeline
 // We do not check the time for gaps, this would require re-counting on every insert
-func AppendR(st *mpd.SegmentTimeline, t, d uint64, r int64) {
+func Append(st *mpd.SegmentTimeline, t, d uint64, r int64) {
 	var rp *int64
 	var tp *uint64
 	if r != 0 {

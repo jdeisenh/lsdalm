@@ -23,6 +23,7 @@ func main() {
 	accessMedia := flag.Bool("accessmedia", false, "Access all Media segments")
 	//verifyMedia := flag.Bool("verifymedia", false, "Verify all Media segments")
 	storeMedia := flag.Bool("storemedia", false, "Store all Media segments")
+	workers := flag.Int("workers", 1, "Number of parallel downloads")
 
 	pollTime := flag.Duration("pollInterval", 5*time.Second, "Poll Interval in milliseconds")
 	timeLimit := flag.Duration("timelimit", 0, "Time limit")
@@ -49,7 +50,7 @@ func main() {
 	case *accessMedia:
 		mode = streamgetter.MODE_ACCESS
 	}
-	sg, err := streamgetter.NewStreamChecker(*name, *url, *dir, *pollTime, mode, logger)
+	sg, err := streamgetter.NewStreamChecker(*name, *url, *dir, *pollTime, mode, logger, *workers)
 	if err != nil {
 		logger.Fatal().Err(err).Send()
 		return
@@ -59,6 +60,5 @@ func main() {
 	} else {
 		go sg.Do()
 		time.Sleep(*timeLimit)
-		sg.Done()
 	}
 }
