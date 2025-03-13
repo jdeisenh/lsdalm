@@ -59,7 +59,7 @@ func main() {
 	}
 
 	// If a port is given, we handle replay requests
-	if *listen != "" {
+	if *listen != "" && mode>=lsdalm.MODE_STORE && *dir!="" {
 		var err error
 		sr, err := lsdalm.NewStreamReplay(sg.GetDumpDir(), logger)
 		if err != nil {
@@ -74,6 +74,7 @@ func main() {
 			go func() {
 				logger.Fatal().Err(http.ListenAndServe(*listen, nil)).Send()
 			}()
+			logger.Info().Msgf("Starting server listening on %s",*listen)
 		}
 	}
 

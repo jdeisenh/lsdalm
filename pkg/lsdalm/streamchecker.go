@@ -99,7 +99,7 @@ func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, f
 	st.manifestDir = path.Join(dumpdir, ManifestPath)
 
 	// Create dump directory if requested
-	if dumpdir != "" && fetchMode >= MODE_STORE {
+	if dumpdir != "" {
 		logger.Info().Msgf("Storing manifests in %s", dumpdir)
 		// Create directory
 		if err := os.MkdirAll(st.manifestDir, 0777); err != nil {
@@ -121,8 +121,10 @@ func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, f
 	}
 
 	// Start workers
+	if fetchMode >= MODE_ACCESS {
 	for w := 0; w < workers; w++ {
 		go st.fetcher()
+	}
 	}
 	return st, nil
 }
