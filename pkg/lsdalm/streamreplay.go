@@ -91,14 +91,16 @@ func (sc *StreamReplay) fillData() error {
 	fs := sc.history[0].At
 	first, err := sc.loadHistoricMpd(fs)
 	if err != nil {
-		sc.logger.Warn().Err(err).Msg("Cannot load")
-	}
+		sc.logger.Warn().Err(err).Msg("Cannot load first mpd")
+		return err
+	} 
 	ff, fl, _ := sc.getPtsRange(first, "video/mp4")
 
 	ls := sc.history[len(sc.history)-1].At
 	last, err := sc.loadHistoricMpd(ls)
 	if err != nil {
-		sc.logger.Warn().Err(err).Msg("Cannot load")
+		sc.logger.Warn().Err(err).Msg("Cannot load last mpd")
+		return err
 	}
 	lf, ll, _ := sc.getPtsRange(last, "video/mp4")
 
@@ -226,11 +228,11 @@ func (sc *StreamReplay) loadHistoricMpd(at time.Time) (*mpd.MPD, error) {
 	}
 	buf, err := os.ReadFile(sourceElement.Filename)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Reading %s: %s",sourceElement.Filename,err)
 	}
 	mpde := new(mpd.MPD)
 	if err := mpde.Decode(buf); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Decoding mpd %s: %s", sourceElement.Filename, err)
 	}
 	return mpde, nil
 }
