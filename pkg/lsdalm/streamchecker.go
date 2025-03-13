@@ -231,18 +231,6 @@ func (sc *StreamChecker) fetchAndStoreManifest() error {
 		sc.logger.Warn().Int("status", resp.StatusCode).Msg("Manifest fetch")
 		return errors.New("Not successful")
 	}
-	if sc.dumpdir != "" {
-		// Store the manifest
-		now := time.Now()
-		filename := now.UTC().Format(ManifestFormat)
-		filepath := path.Join(sc.manifestDir, filename)
-		err = os.WriteFile(filepath, contents, 0644)
-		if err != nil {
-			sc.logger.Error().Err(err).Str("path", filepath).Msg("Write manifest")
-			return err
-		}
-		//sc.history = append(sc.history, HistoryElement{now, filename})
-	}
 	if ct := resp.Header.Get("Content-Type"); ct == "application/json" {
 		var sessioninfo struct{ MediaUrl string }
 		err := json.Unmarshal(contents, &sessioninfo)
@@ -265,6 +253,19 @@ func (sc *StreamChecker) fetchAndStoreManifest() error {
 		return sc.fetchAndStoreManifest()
 
 	}
+
+        if sc.dumpdir != "" {
+                // Store the manifest
+                now := time.Now()
+                filename := now.UTC().Format(ManifestFormat)
+                filepath := path.Join(sc.manifestDir, filename)
+                err = os.WriteFile(filepath, contents, 0644)
+                if err != nil {
+                        sc.logger.Error().Err(err).Str("path", filepath).Msg("Write manifest")
+                        return err
+                }
+                //sc.history = append(sc.history, HistoryElement{now, filename})
+        }
 
 	mpd := new(mpd.MPD)
 	err = mpd.Decode(contents)
