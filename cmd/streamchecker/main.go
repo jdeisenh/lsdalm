@@ -65,6 +65,9 @@ func main() {
 		if err != nil {
 			logger.Fatal().Err(err).Send()
 		} else {
+			sg.AddFetchCallback(func(path string, at time.Time) {
+				sr.AddManifest(path, at)
+			})
 			// Paths for segments
 			http.HandleFunc("/manifest.mpd", sr.Handler)
 			http.HandleFunc("/", sr.FileHandler)

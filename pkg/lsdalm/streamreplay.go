@@ -22,6 +22,7 @@ type StreamReplay struct {
 	manifestDir     string
 	originalBaseUrl *url.URL
 	storageMeta     StorageMeta
+	isPast          bool // Flag: recording end is past, loop mode
 
 	logger                   zerolog.Logger
 	history                  []HistoryElement
@@ -61,6 +62,7 @@ func (sc *StreamReplay) LoadArchive() error {
 	if len(sc.history) < 10 {
 		return fmt.Errorf("Not enough manifests")
 	}
+	sc.isPast = true
 	sc.ShowStats()
 	return nil
 }
@@ -271,6 +273,28 @@ func (sc *StreamReplay) GetLooped(at, now time.Time, requestDuration time.Durati
 	return afterEncode, nil
 }
 
+// GetArchived generates a Manifest by finding the manifest at 'at'
+func (sc *StreamReplay) GetArchived(to time.Duration, now time.Time) ([]byte, error) {
+
+	mpdCurrent, err := sc.loadHistoricMpd(now.Add(-to))
+	if err != nil {
+		return []byte{}, err
+	}
+	// This must be constant
+	shift := to
+
+	sc.AdjustMpd(mpdCurrent, shift, sc.storageMeta.HaveMedia) // Manipulate
+
+	sc.logger.Debug().Msgf("Move period: %s", shift)
+
+	// re-encode
+	afterEncode, err := mpdCurrent.Encode()
+	if err != nil {
+		return nil, err
+	}
+	return afterEncode, nil
+}
+
 // Iterate through all periods, representation, segmentTimeline and
 func (sc *StreamReplay) getPtsRange(mpde *mpd.MPD, mimetype string) (time.Time, time.Time, error) {
 
@@ -349,6 +373,7 @@ func (sc *StreamReplay) Handler(w http.ResponseWriter, r *http.Request) {
 	}
 	// to timeoffset
 	ts := qm["to"]
+	var to time.Duration
 	if len(ts) > 0 {
 		t, err := strconv.Atoi(ts[0])
 		if err != nil {
@@ -356,7 +381,8 @@ func (sc *StreamReplay) Handler(w http.ResponseWriter, r *http.Request) {
 		} else if t < 0 && t > 1e6 {
 			sc.logger.Warn().Msg("Implausable time offset, ignoring")
 		} else {
-			startat = startat.Add(-time.Duration(t) * time.Second)
+			to = time.Duration(t) * time.Second
+			startat = startat.Add(-to)
 		}
 	}
 	/*
@@ -373,7 +399,13 @@ func (sc *StreamReplay) Handler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	*/
-	buf, err := sc.GetLooped(startat, now, duration)
+	var buf []byte
+	var err error
+	if sc.isPast {
+		buf, err = sc.GetLooped(startat, now, duration)
+	} else {
+		buf, err = sc.GetArchived(to, now)
+	}
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return

@@ -54,6 +54,8 @@ type StreamChecker struct {
 	haveMap   map[string]bool // Map of requests in queue (to avoid adding them several times)
 	haveMutex sync.Mutex      // Mutex protecting the haveMap
 
+	onFetch []func(string, time.Time) // Callbacks to be execute on manifest storage
+
 	// State
 	initialPeriod   *mpd.Period // The first period ever fetched, stream format of initial period
 	upcomingSplices SpliceList  // SCTE-Markers announced
@@ -106,6 +108,11 @@ func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, fe
 
 	}
 	return st, nil
+}
+
+// AddFetchCallback adds a callback executed on manifest storage
+func (sc *StreamChecker) AddFetchCallback(f func(string, time.Time)) {
+	sc.onFetch = append(sc.onFetch, f)
 }
 
 // fetchAndStoreSegment queues an URL for fetching
@@ -263,6 +270,10 @@ func (sc *StreamChecker) fetchAndStoreManifest() error {
 		if err != nil {
 			sc.logger.Error().Err(err).Str("path", filepath).Msg("Write manifest")
 			return err
+		}
+		// Call hooks
+		for _, e := range sc.onFetch {
+			e(filepath, now)
 		}
 	}
 
