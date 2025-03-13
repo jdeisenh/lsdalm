@@ -1,4 +1,4 @@
-package streamgetter
+package lsdalm
 
 import (
 	"fmt"

@@ -2,10 +2,11 @@ package main
 
 import (
 	"flag"
+	"net/http"
 	"os"
 	"time"
 
-	streamgetter "github.com/jdeisenh/lsdalm/pkg/lsdalm"
+	"github.com/jdeisenh/lsdalm/pkg/lsdalm"
 	"github.com/rs/zerolog"
 )
 
@@ -24,6 +25,7 @@ func main() {
 	//verifyMedia := flag.Bool("verifymedia", false, "Verify all Media segments")
 	storeMedia := flag.Bool("storemedia", false, "Store all Media segments")
 	workers := flag.Int("workers", 1, "Number of parallel downloads")
+	listen := flag.String("replayport", "", "socket:Port for timeshift replay server (e.g. :8080)")
 
 	pollTime := flag.Duration("pollInterval", 5*time.Second, "Poll Interval in milliseconds")
 	timeLimit := flag.Duration("timelimit", 0, "Time limit")
@@ -41,20 +43,37 @@ func main() {
 	}
 	var err error
 
-	var mode streamgetter.FetchMode
+	var mode lsdalm.FetchMode
 	switch {
 	// Order is important for precedence
 	case *storeMedia:
-		mode = streamgetter.MODE_STORE
+		mode = lsdalm.MODE_STORE
 	//case verifymedia:
 	case *accessMedia:
-		mode = streamgetter.MODE_ACCESS
+		mode = lsdalm.MODE_ACCESS
 	}
-	sg, err := streamgetter.NewStreamChecker(*name, *url, *dir, *pollTime, mode, logger, *workers)
+	sg, err := lsdalm.NewStreamChecker(*name, *url, *dir, *pollTime, mode, logger, *workers)
 	if err != nil {
 		logger.Fatal().Err(err).Send()
 		return
 	}
+
+	// If a port is given, we handle replay requests
+	if *listen != "" {
+		var err error
+		sr, err := lsdalm.NewStreamReplay(*dir, logger)
+		if err != nil {
+			logger.Fatal().Err(err).Send()
+		} else {
+			// Paths for segments
+			http.HandleFunc("/manifest.mpd", sr.Handler)
+			http.HandleFunc("/", sr.FileHandler)
+			go func() {
+				logger.Fatal().Err(http.ListenAndServe(*listen, nil)).Send()
+			}()
+		}
+	}
+
 	if *timeLimit == time.Duration(0) {
 		sg.Do()
 	} else {

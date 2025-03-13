@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	streamgetter "github.com/jdeisenh/lsdalm/pkg/lsdalm"
+	"github.com/jdeisenh/lsdalm/pkg/lsdalm"
 	"github.com/rs/zerolog"
 )
 
@@ -33,12 +33,16 @@ func main() {
 		return
 	}
 	var err error
-	sg, err := streamgetter.NewStreamReplay(*dump, logger)
+	sg, err := lsdalm.NewStreamReplay(*dump, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Send()
 		return
 	}
-	// Todo: Load data
+	err = sg.LoadArchive()
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Load Archive")
+		return
+	}
 	// Paths for segments
 	http.HandleFunc("/manifest.mpd", sg.Handler)
 	http.HandleFunc("/", sg.FileHandler)

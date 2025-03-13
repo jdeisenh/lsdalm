@@ -1,4 +1,4 @@
-package streamgetter
+package lsdalm
 
 import (
 	"encoding/json"
@@ -53,15 +53,26 @@ func NewStreamReplay(dumpdir string, logger zerolog.Logger) (*StreamReplay, erro
 		}
 		st.originalBaseUrl.Path = path.Dir(st.originalBaseUrl.Path)
 	}
-	st.fillData()
-	if len(st.history) < 10 {
-		return nil, fmt.Errorf("Not enough manifests")
-	}
-	st.ShowStats()
 	return st, nil
 }
 
-// fillData reads add the manifests
+func (sc *StreamReplay) LoadArchive() error {
+	sc.fillData()
+	if len(sc.history) < 10 {
+		return fmt.Errorf("Not enough manifests")
+	}
+	sc.ShowStats()
+	return nil
+}
+
+// AddManifest adds a manifest to the archive
+func (sc *StreamReplay) AddManifest(filepath string, ctime time.Time) {
+	sc.history = append(sc.history, HistoryElement{At: ctime, Filename: path.Base(filepath)})
+
+}
+
+// fillData scans manifestDir and fills history with timestamp->filename
+// it will also find first and last TimeLine date in history
 func (sc *StreamReplay) fillData() error {
 	files, err := os.ReadDir(sc.manifestDir)
 	if err != nil {
@@ -93,7 +104,7 @@ func (sc *StreamReplay) fillData() error {
 	if err != nil {
 		sc.logger.Warn().Err(err).Msg("Cannot load first mpd")
 		return err
-	} 
+	}
 	ff, fl, _ := sc.getPtsRange(first, "video/mp4")
 
 	ls := sc.history[len(sc.history)-1].At
@@ -228,7 +239,7 @@ func (sc *StreamReplay) loadHistoricMpd(at time.Time) (*mpd.MPD, error) {
 	}
 	buf, err := os.ReadFile(sourceElement.Filename)
 	if err != nil {
-		return nil, fmt.Errorf("Reading %s: %s",sourceElement.Filename,err)
+		return nil, fmt.Errorf("Reading %s: %s", sourceElement.Filename, err)
 	}
 	mpde := new(mpd.MPD)
 	if err := mpde.Decode(buf); err != nil {

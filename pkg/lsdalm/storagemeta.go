@@ -1,4 +1,4 @@
-package streamgetter
+package lsdalm
 
 // The format of the meta.json we store with the data
 const StorageMetaFileName = "meta.json"

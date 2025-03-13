@@ -38,7 +38,7 @@ func main() {
 		logger.Fatal().Err(err).Send()
 		return
 	}
-	// Todo: Load data
+
 	// Paths for segments
 	http.HandleFunc("/manifest.mpd", sg.Handler)
 	http.HandleFunc("/dash/", sg.FileHandler)

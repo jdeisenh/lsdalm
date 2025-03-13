@@ -1,4 +1,4 @@
-package streamgetter
+package lsdalm
 
 import (
 	"encoding/json"
@@ -17,47 +17,46 @@ import (
 )
 
 const (
-	ManifestPath     = "manifests"
-	ManifestFormat   = "manifest-2006-01-02T15:04:05Z.mpd"
-	FetchQueueSize   = 5000                           // Max number of outstanding requests in queue
-	maxGapLog        = 5 * time.Millisecond           // Warn above this gap length
-	dateShortFmt     = "15:04:05.00"                  // Used in logging dates
-	schemeScteXml    = "urn:scte:scte35:2014:xml+bin" // The one scte scheme we support right now
+	ManifestPath     = "manifests"                         // subdirectory name for manifests
+	ManifestFormat   = "manifest-2006-01-02T15:04:05Z.mpd" // time format for filenames
+	FetchQueueSize   = 5000                                // Max number of outstanding requests in queue
+	maxGapLog        = 5 * time.Millisecond                // Warn above this gap length
+	dateShortFmt     = "15:04:05.00"                       // Used in logging dates
+	schemeScteXml    = "urn:scte:scte35:2014:xml+bin"      // The one scte scheme we support right now
 	DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 )
 
 // What to do with the media segments
 const (
-	MODE_NOFETCH = iota
-	MODE_ACCESS  // just access
-	//MODE_VERIFY  // get, check timestamps
-	MODE_STORE // plus store
+	MODE_NOFETCH = iota // Do not fetch media segments
+	MODE_ACCESS         // just access by a "HEAD" request, dont get data
+	MODE_VERIFY         // get, check timestamps. Not decoded yet
+	MODE_STORE          // verification and store plus store
 )
 
 type FetchMode int
 
 type StreamChecker struct {
-	name        string
-	sourceUrl   *url.URL
-	dumpdir     string
-	manifestDir string
-	userAgent   string
-	// Duration for manifests
-	updateFreq time.Duration
-	fetchqueue chan *url.URL
-	done       chan struct{}
-	ticker     *time.Ticker
-	fetchMode  FetchMode
+	name        string        // Name, display only
+	sourceUrl   *url.URL      // Manifest source URL
+	dumpdir     string        // Directory we write manifests and segments
+	manifestDir string        // Subdirectory of above for manifests
+	userAgent   string        // Agent used in outgoing http
+	updateFreq  time.Duration // Update freq for manifests
+	fetchqueue  chan *url.URL // Buffered chan for async media segment requests
+	done        chan struct{} // Chan to stop background goroutines
+	ticker      *time.Ticker  // Ticker for timing manifest requests
+	fetchMode   FetchMode     // Media segment fetch mode: one of MODE_
 
-	logger zerolog.Logger
+	logger zerolog.Logger // Logger instance
 	client *http.Client
 
-	haveMutex sync.Mutex
-	haveMap   map[string]bool
+	haveMap   map[string]bool // Map of requests in queue (to avoid adding them several times)
+	haveMutex sync.Mutex      // Mutex protecting the haveMap
 
 	// State
-	initialPeriod   *mpd.Period
-	upcomingSplices SpliceList
+	initialPeriod   *mpd.Period // The first period ever fetched, stream format of initial period
+	upcomingSplices SpliceList  // SCTE-Markers announced
 }
 
 func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, fetchMode FetchMode, logger zerolog.Logger, workers int) (*StreamChecker, error) {
@@ -139,6 +138,7 @@ func (sc *StreamChecker) fetchAndStoreSegment(fetchthis *url.URL) error {
 		sc.haveMutex.Unlock()
 		return nil
 	default:
+		// That happens in batches, should probably be rate limited
 		sc.logger.Error().Msg("Queue full")
 		return errors.New("Queue full")
 	}
@@ -254,18 +254,17 @@ func (sc *StreamChecker) fetchAndStoreManifest() error {
 
 	}
 
-        if sc.dumpdir != "" {
-                // Store the manifest
-                now := time.Now()
-                filename := now.UTC().Format(ManifestFormat)
-                filepath := path.Join(sc.manifestDir, filename)
-                err = os.WriteFile(filepath, contents, 0644)
-                if err != nil {
-                        sc.logger.Error().Err(err).Str("path", filepath).Msg("Write manifest")
-                        return err
-                }
-                //sc.history = append(sc.history, HistoryElement{now, filename})
-        }
+	if sc.dumpdir != "" {
+		// Store the manifest
+		now := time.Now()
+		filename := now.UTC().Format(ManifestFormat)
+		filepath := path.Join(sc.manifestDir, filename)
+		err = os.WriteFile(filepath, contents, 0644)
+		if err != nil {
+			sc.logger.Error().Err(err).Str("path", filepath).Msg("Write manifest")
+			return err
+		}
+	}
 
 	mpd := new(mpd.MPD)
 	err = mpd.Decode(contents)
