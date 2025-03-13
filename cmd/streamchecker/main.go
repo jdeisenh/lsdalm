@@ -61,7 +61,7 @@ func main() {
 	// If a port is given, we handle replay requests
 	if *listen != "" {
 		var err error
-		sr, err := lsdalm.NewStreamReplay(*dir, logger)
+		sr, err := lsdalm.NewStreamReplay(sg.GetDumpDir(), logger)
 		if err != nil {
 			logger.Fatal().Err(err).Send()
 		} else {

@@ -61,17 +61,15 @@ type StreamChecker struct {
 	upcomingSplices SpliceList  // SCTE-Markers announced
 }
 
-func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, fetchMode FetchMode, logger zerolog.Logger, workers int) (*StreamChecker, error) {
+func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, fetchMode FetchMode, logger zerolog.Logger, workers int) (*StreamChecker, error) {
 
 	st := &StreamChecker{
-		name:        name,
-		dumpdir:     dumpdir,
-		updateFreq:  updateFreq,
-		manifestDir: path.Join(dumpdir, ManifestPath),
-		fetchqueue:  make(chan *url.URL, FetchQueueSize),
-		logger:      logger.With().Str("channel", name).Logger(),
-		done:        make(chan struct{}),
-		fetchMode:   fetchMode,
+		name:       name,
+		updateFreq: updateFreq,
+		fetchqueue: make(chan *url.URL, FetchQueueSize),
+		logger:     logger.With().Str("channel", name).Logger(),
+		done:       make(chan struct{}),
+		fetchMode:  fetchMode,
 		client: &http.Client{
 			Transport: &http.Transport{},
 		},
@@ -83,11 +81,26 @@ func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, fe
 	if err != nil {
 		return nil, err
 	}
-	// Start workers
-	for w := 0; w < workers; w++ {
-		go st.fetcher()
+	// Create a storage directory from dumpdir, name, date and version
+	var dumpdir string
+	if dumpbase != "" {
+		version := ""
+		for versioncount := 0; versioncount < 20; versioncount++ {
+			dumpdir = path.Join(dumpbase, name+"-"+time.Now().Format("2006-01-02")+version)
+			if _, e := os.Stat(dumpdir); e != nil {
+				break
+			}
+			logger.Debug().Msgf("Directory %s exists", dumpdir)
+			dumpdir = ""
+			version = fmt.Sprintf(".%d", versioncount+1)
+		}
 	}
-	if dumpdir != "" {
+	st.dumpdir = dumpdir
+	st.manifestDir = path.Join(dumpdir, ManifestPath)
+
+	// Create dump directory if requested
+	if dumpdir != "" && fetchMode >= MODE_STORE {
+		logger.Info().Msgf("Storing manifests in %s", dumpdir)
 		// Create directory
 		if err := os.MkdirAll(st.manifestDir, 0777); err != nil {
 			return nil, errors.New("Cannot create directory")
@@ -105,9 +118,18 @@ func NewStreamChecker(name, source, dumpdir string, updateFreq time.Duration, fe
 		if err != nil {
 			return st, err
 		}
+	}
 
+	// Start workers
+	for w := 0; w < workers; w++ {
+		go st.fetcher()
 	}
 	return st, nil
+}
+
+// GetDumpDir() returns the filesystem path where manifests and segments are stored
+func (sc *StreamChecker) GetDumpDir() string {
+	return sc.dumpdir
 }
 
 // AddFetchCallback adds a callback executed on manifest storage
