@@ -59,7 +59,7 @@ func main() {
 	}
 
 	// If a port is given, we handle replay requests
-	if *listen != "" && mode>=lsdalm.MODE_STORE && *dir!="" {
+	if *listen != "" && *dir!="" {
 		var err error
 		sr, err := lsdalm.NewStreamReplay(sg.GetDumpDir(), logger)
 		if err != nil {
