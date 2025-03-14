@@ -17,6 +17,8 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// StreamReplay can replay a recording as is, time-shifted, but otherwise not manipulated
+// It will manipulate presentationTimeOffsets and BaseURLs
 type StreamReplay struct {
 	dumpdir         string
 	manifestDir     string
@@ -57,6 +59,8 @@ func NewStreamReplay(dumpdir string, logger zerolog.Logger) (*StreamReplay, erro
 	return st, nil
 }
 
+// LoadArchive Load the full recording
+// This is used for already stored, finished Recordings
 func (sc *StreamReplay) LoadArchive() error {
 	sc.fillData()
 	if len(sc.history) < 10 {
@@ -68,6 +72,7 @@ func (sc *StreamReplay) LoadArchive() error {
 }
 
 // AddManifest adds a manifest to the archive
+// This is called for on-the-fly timeshift
 func (sc *StreamReplay) AddManifest(filepath string, ctime time.Time) {
 	sc.history = append(sc.history, HistoryElement{At: ctime, Filename: path.Base(filepath)})
 
