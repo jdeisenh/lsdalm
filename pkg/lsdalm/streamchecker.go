@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -122,9 +123,9 @@ func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, f
 
 	// Start workers
 	if fetchMode >= MODE_ACCESS {
-	for w := 0; w < workers; w++ {
-		go st.fetcher()
-	}
+		for w := 0; w < workers; w++ {
+			go st.fetcher()
+		}
 	}
 	return st, nil
 }
@@ -262,7 +263,7 @@ func (sc *StreamChecker) fetchAndStoreManifest() error {
 		sc.logger.Warn().Int("status", resp.StatusCode).Msg("Manifest fetch")
 		return errors.New("Not successful")
 	}
-	if ct := resp.Header.Get("Content-Type"); ct == "application/json" {
+	if ct := resp.Header.Get("Content-Type"); strings.HasPrefix(ct, "application/json") || strings.HasPrefix(ct, "text/plain") {
 		var sessioninfo struct{ MediaUrl string }
 		err := json.Unmarshal(contents, &sessioninfo)
 		if err != nil {
