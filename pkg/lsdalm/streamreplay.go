@@ -186,6 +186,7 @@ func baseToPath(base, prefix string) string {
 }
 
 // AdjustMpd adds a time offset to each Period in the Manifest, shifting the PresentationTime
+// Note that this will change the mpd, which only is not problem if its freshly reloaded
 func (sc *StreamReplay) AdjustMpd(mpde *mpd.MPD, shift time.Duration, localMedia bool) {
 	if len(mpde.Period) == 0 {
 		return

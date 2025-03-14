@@ -1,8 +1,11 @@
 package lsdalm
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"os"
 	"path"
 	"strconv"
 	"time"
@@ -26,6 +29,9 @@ type StreamLooper struct {
 
 	recording *Recording
 	// statistics
+
+	originalBaseUrl *url.URL
+	storageMeta     StorageMeta
 }
 
 func NewStreamLooper(dumpdir string, logger zerolog.Logger) (*StreamLooper, error) {
@@ -39,29 +45,57 @@ func NewStreamLooper(dumpdir string, logger zerolog.Logger) (*StreamLooper, erro
 	if len(st.recording.history) < 10 {
 		return nil, fmt.Errorf("Not enough manifests")
 	}
+
+	metapath := path.Join(dumpdir, StorageMetaFileName)
+	mf, err := os.ReadFile(metapath)
+	if err != nil {
+		logger.Warn().Err(err).Str("filename", metapath).Msg("Read Metadata")
+	} else {
+		err = json.Unmarshal(mf, &st.storageMeta)
+		if err != nil {
+			logger.Warn().Err(err).Str("filename", metapath).Msg("Decode Metadata")
+		}
+
+		st.originalBaseUrl, err = url.Parse(st.storageMeta.ManifestUrl)
+		if err != nil {
+			return nil, err
+		}
+		st.originalBaseUrl.Path = path.Dir(st.originalBaseUrl.Path)
+	}
+
 	st.recording.ShowStats(st.logger)
 	return st, nil
 }
 
 // AdjustMpd adds 'shift' to the 'start' attribute of each Period, shifting the PresentationTime
-func (sc *StreamLooper) AdjustMpd(mpde *mpd.MPD, shift time.Duration) *mpd.MPD {
+func (sc *StreamLooper) AdjustMpd(mpde *mpd.MPD, originalBase *url.URL, localMedia bool) *mpd.MPD {
 	if len(mpde.Period) == 0 {
 		return nil
 	}
 	outMpd := new(mpd.MPD)
 	*outMpd = *mpde
 	outMpd.Period = make([]*mpd.Period, 0, 1)
+
 	for _, period := range mpde.Period {
-		// Shift periods
 		np := new(mpd.Period)
 		*np = *period
-		if period.Start != nil {
-			startmed, _ := (*period.Start).ToNanoseconds()
-			start := time.Duration(startmed)
-			ns := DurationToXsdDuration(start + shift)
-			np.Start = &ns
+
+		// Expand to full URL first
+		if originalBase != nil && len(np.BaseURL) > 0 && np.BaseURL[0].Value != "" {
+			baseurl := np.BaseURL[0].Value
+			baseurlUrl := ConcatURL(originalBase, baseurl)
+			np.BaseURL = make([]*mpd.BaseURL, 0, 1)
+			nburl := new(mpd.BaseURL)
+			*nburl = *period.BaseURL[0]
+			np.BaseURL = append(np.BaseURL, nburl)
+			if localMedia {
+				np.BaseURL[0].Value = baseurlUrl.Path[1:]
+			} else {
+				np.BaseURL[0].Value = baseurlUrl.String()
+			}
 		}
 		outMpd.Period = append(outMpd.Period, np)
+
 	}
 	return outMpd
 }
@@ -80,7 +114,10 @@ func (sc *StreamLooper) mergeMpd(mpd1, mpd2 *mpd.MPD) *mpd.MPD {
 
 // BuildMpb takes the recordings original mpd and adds Segments for the indicated timestamps range
 // it also shifts the Timeline by 'shift' and assigns a new id
-func (sc *StreamLooper) BuildMpd(shift time.Duration, id string, newstart, from, to time.Time) *mpd.MPD {
+// ptsShift: shift presentationTime
+// periodStart: Beginning of Period
+// from, to: Segments to include (in shifted absolute time)
+func (sc *StreamLooper) BuildMpd(ptsShift time.Duration, id string, periodStart, from, to time.Time) *mpd.MPD {
 	mpde := sc.recording.originalMpd
 	outMpd := new(mpd.MPD)
 	*outMpd = *mpde // Copy mpd
@@ -105,12 +142,15 @@ func (sc *StreamLooper) BuildMpd(shift time.Duration, id string, newstart, from,
 	}
 
 	// Calculate period start
-	var shiftValue time.Duration
+	var effectivePtsShift time.Duration
 	if period.Start != nil {
 		startmed, _ := (*period.Start).ToNanoseconds()
-		start := time.Duration(startmed)
-		shiftValue = newstart.Sub(ast) - start - shift
-		ns := DurationToXsdDuration(newstart.Sub(ast))
+		currentPeriodStart := time.Duration(startmed)
+		// Time we have to move PTS to offset period start adjustment and ptsOffset
+		effectivePtsShift = periodStart.Sub(ast) - currentPeriodStart - ptsShift
+		sc.logger.Debug().Msgf("Org and Effective PTS shift: %d %d", ptsShift, effectivePtsShift)
+		ns := DurationToXsdDuration(periodStart.Sub(ast))
+		sc.logger.Debug().Msgf("Period start: %s", periodStart.Sub(ast))
 		np.Start = &ns
 	}
 	if period.ID != nil {
@@ -133,15 +173,14 @@ func (sc *StreamLooper) BuildMpd(shift time.Duration, id string, newstart, from,
 
 		nstl.S = nstl.S[:0]
 		elements := sc.recording.Segments[asi]
-		shiftPto(nst, shiftValue)
-		//startrt := newstart.Add(-TLP2Duration(int64(ZeroIfNil(nst.PresentationTimeOffset)), ZeroIfNil(nst.Timescale)))
+		shiftPto(nst, effectivePtsShift)
 		start := elements.start
 		timescale := ZeroIfNil(nst.Timescale)
 		pto := ZeroIfNil(nst.PresentationTimeOffset)
 		first := true
 		for _, s := range elements.elements {
 			for ri := int64(0); ri <= s.r; ri++ {
-				ts := newstart.Add(TLP2Duration(int64(uint64(start)-pto), timescale))
+				ts := periodStart.Add(TLP2Duration(int64(uint64(start)-pto), timescale))
 				d := TLP2Duration(s.d, timescale)
 				if !ts.Add(d).Before(from) && ts.Add(d).Before(to) {
 					t := uint64(0)
@@ -170,11 +209,11 @@ func (sc *StreamLooper) BuildMpd(shift time.Duration, id string, newstart, from,
 		*evs = *ev
 		pto := uint64(ZeroIfNil(ev.PresentationTimeOffset))
 		timescale := ZeroIfNil(ev.Timescale)
-		pto = uint64(int64(pto) + Duration2TLP(shiftValue, timescale))
+		pto = uint64(int64(pto) + Duration2TLP(effectivePtsShift, timescale))
 		evs.PresentationTimeOffset = &pto
 		fel := evs.Event[:0]
 		for _, e := range evs.Event {
-			ts := newstart.Add(TLP2Duration(int64(*e.PresentationTime-pto), timescale))
+			ts := periodStart.Add(TLP2Duration(int64(*e.PresentationTime-pto), timescale))
 			d := TLP2Duration(int64(ZeroIfNil(e.Duration)), timescale)
 			// Still in the future
 			if ts.After(to) {
@@ -241,6 +280,7 @@ func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Durati
 			now,
 		)
 	}
+	mpdCurrent = sc.AdjustMpd(mpdCurrent, sc.originalBaseUrl, sc.storageMeta.HaveMedia)
 	// re-encode
 	afterEncode, err := mpdCurrent.Encode()
 	if err != nil {
@@ -249,19 +289,35 @@ func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Durati
 	return afterEncode, nil
 }
 
-// GetLooped generates a Manifest by finding the manifest before now%duration
-func (sc *StreamLooper) GetPlayback(at, now time.Time, requestDuration time.Duration) ([]byte, error) {
+// GetStatic generates a Manifest by finding the manifest before now%duration
+func (sc *StreamLooper) GetStatic() ([]byte, error) {
 
-	offset, shift, duration, startOfRecording := sc.recording.getLoopMeta(at, now, requestDuration)
-	sc.logger.Info().Msgf("Offset: %s TimeShift: %s LoopDuration: %s LoopStart:%s At %s",
-		RoundToS(offset), RoundToS(shift), RoundToS(duration), shortT(startOfRecording), shortT(at))
-	mpdCurrent, err := sc.recording.loadHistoricMpd(startOfRecording.Add(offset))
-	if err != nil {
-		return []byte{}, err
-	}
+	start, end := sc.recording.getTimelineRange()
+	//start, end = sc.recording.getRecordingRange()
+	duration := end.Sub(start)
+	ast := time.Time(*sc.recording.originalMpd.AvailabilityStartTime)
+	sc.logger.Debug().Msgf("Start %s End %s Duration %s Shift %s",
+		shortT(start), shortT(end), RoundToS(duration), start.Sub(ast))
 
-	mpdCurrent = sc.AdjustMpd(mpdCurrent, shift) // shift PresentationTime
-
+	now := time.Now()
+	var mpdCurrent *mpd.MPD
+	mpdCurrent = sc.BuildMpd(
+		-start.Sub(ast),
+		"ID-0",
+		ast, // Period starts at 0
+		ast,
+		now,
+	)
+	mpdCurrent.AvailabilityStartTime = nil
+	mpdtype := "static"
+	mpdCurrent.Type = &mpdtype
+	mpdCurrent.TimeShiftBufferDepth = nil
+	mpdCurrent.SuggestedPresentationDelay = nil
+	mpdCurrent.MinimumUpdatePeriod = nil
+	dur := DurationToXsdDuration(duration)
+	mpdCurrent.MediaPresentationDuration = &dur
+	mpdCurrent.Period[0].Duration = &dur
+	mpdCurrent = sc.AdjustMpd(mpdCurrent, sc.originalBaseUrl, sc.storageMeta.HaveMedia)
 	// re-encode
 	afterEncode, err := mpdCurrent.Encode()
 	if err != nil {
@@ -271,7 +327,7 @@ func (sc *StreamLooper) GetPlayback(at, now time.Time, requestDuration time.Dura
 }
 
 // Handler serves manifests
-func (sc *StreamLooper) Handler(w http.ResponseWriter, r *http.Request) {
+func (sc *StreamLooper) DynamicHandler(w http.ResponseWriter, r *http.Request) {
 	/*
 		loopstart, _ := time.Parse(time.RFC3339, "2025-02-27T09:48:00Z")
 		startat= loopstart.Add(time.Now().Sub(sc.start))
@@ -324,4 +380,16 @@ func (sc *StreamLooper) FileHandler(w http.ResponseWriter, r *http.Request) {
 	filepath := path.Join(sc.dumpdir, r.URL.Path)
 	sc.logger.Trace().Str("path", filepath).Msg("Access")
 	http.ServeFile(w, r, filepath)
+}
+
+// Static Handler serves the whole buffer as a static mpd
+func (sc *StreamLooper) StaticHandler(w http.ResponseWriter, r *http.Request) {
+
+	buf, err := sc.GetStatic()
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	w.Header().Add("Content-Type", "application/dash+xml")
+	w.Write(buf)
 }

@@ -40,7 +40,9 @@ func main() {
 	}
 
 	// Paths for segments
-	http.HandleFunc("/manifest.mpd", sg.Handler)
-	http.HandleFunc("/dash/", sg.FileHandler)
+	http.HandleFunc("/manifest.mpd", sg.DynamicHandler)
+	http.HandleFunc("/static.mpd", sg.StaticHandler)
+	http.HandleFunc("/", sg.FileHandler)
+	logger.Info().Msgf("Listening on %s", *listen)
 	logger.Fatal().Err(http.ListenAndServe(*listen, nil)).Send()
 }

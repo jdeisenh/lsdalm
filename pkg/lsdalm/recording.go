@@ -2,12 +2,12 @@ package lsdalm
 
 import (
 	"errors"
+	"fmt"
+	"github.com/jdeisenh/lsdalm/pkg/go-mpd"
+	"github.com/rs/zerolog"
 	"os"
 	"path"
 	"time"
-
-	"github.com/jdeisenh/lsdalm/pkg/go-mpd"
-	"github.com/rs/zerolog"
 )
 
 type Recording struct {
@@ -86,7 +86,8 @@ func (re *Recording) fillData(logger zerolog.Logger) error {
 		}
 		err = re.AddMpdToHistory(got)
 		if err != nil {
-			logger.Error().Err(err).Msg("Add manifest")
+			logger.Error().Err(err).Str("path", f.Name()).Msg("Add manifest")
+			break
 		}
 	}
 
@@ -206,6 +207,32 @@ func (re *Recording) FindHistory(want time.Time) *HistoryElement {
 	return &acopy
 }
 
+func (re *Recording) getTimelineRange() (from, to time.Time) {
+	if re.originalMpd == nil || len(re.originalMpd.Period) == 0 {
+		return
+	}
+	var ast time.Time
+	if re.originalMpd.AvailabilityStartTime != nil {
+		ast = time.Time(*re.originalMpd.AvailabilityStartTime)
+	}
+	// First period only
+	period := re.originalMpd.Period[0]
+	for asi, as := range period.AdaptationSets {
+		asf := re.Segments[asi]
+		timescale := ZeroIfNil(as.SegmentTemplate.Timescale)
+		ls := ast.Add(TLP2Duration(asf.start, timescale))
+		le := ast.Add(TLP2Duration(asf.end, timescale))
+		if from.IsZero() || from.After(ls) {
+			from = ls
+		}
+		if to.IsZero() || to.Before(le) {
+			to = le
+		}
+	}
+	return
+}
+
+// getRecordingRange gets first and last *sample* time for the manifests
 func (re *Recording) getRecordingRange() (from, to time.Time) {
 	from = re.history[0].At
 	to = re.history[len(re.history)-1].At
@@ -264,7 +291,7 @@ func (as *AdaptationSet) Add(t, d, r int64) error {
 		return nil
 	}
 	if t > as.end {
-		return noncont
+		return fmt.Errorf("%w on gap of %d appending to %d", noncont, t-as.end, as.end)
 	}
 	if last < 0 || as.elements[last].d != d {
 		// New element

@@ -199,9 +199,10 @@ func shiftPto(st *mpd.SegmentTemplate, shiftValue time.Duration) {
 	if lpto := st.PresentationTimeOffset; lpto != nil {
 		pto = *lpto
 	}
-	pto = uint64(int64(pto) + Duration2TLP(shiftValue, timescale))
+	ptn := uint64(int64(pto) + Duration2TLP(shiftValue, timescale))
+	//log.Debug().Msgf("PTO %d shift %s %d  new %d",pto,shiftValue,Duration2TLP(shiftValue, timescale),ptn)
 	// Write back
-	st.PresentationTimeOffset = &pto
+	st.PresentationTimeOffset = &ptn
 }
 
 // Iterate through all periods, representation, segmentTimeline and
