@@ -60,8 +60,9 @@ type StreamChecker struct {
 	// State
 	initialPeriod   *mpd.Period // The first period ever fetched, stream format of initial period
 	upcomingSplices SpliceList  // SCTE-Markers announced
-	lastMpd         *mpd.MPD
 	lastDate        string
+
+	mpdDiffer *MpdDiffer
 }
 
 func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, fetchMode FetchMode, logger zerolog.Logger, workers int) (*StreamChecker, error) {
@@ -78,6 +79,7 @@ func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, f
 		},
 		haveMap:   make(map[string]bool),
 		userAgent: DefaultUserAgent,
+		mpdDiffer: NewMpdDiffer(logger),
 	}
 	var err error
 	st.sourceUrl, err = url.Parse(source)
@@ -331,17 +333,10 @@ func (sc *StreamChecker) fetchAndStoreManifest() error {
 
 }
 
-func (sc *StreamChecker) DiffMpd(mpde *mpd.MPD) error {
-	//changelog.err := diff.Diff(sc.lastMpd, mpde)
-	//sc.logger.Info().Msgf("Diff: %w %+v", err, changelog)
-	return nil
-}
-
 func (sc *StreamChecker) OnNewMpd(mpde *mpd.MPD) error {
 
-	err := sc.DiffMpd(mpde)
-	sc.lastMpd = mpde
-	err = sc.walkMpd(mpde)
+	err := sc.mpdDiffer.Update(mpde)
+	//err = sc.walkMpd(mpde)
 	if sc.fetchMode > MODE_NOFETCH {
 		err = onAllSegmentUrls(mpde, sc.sourceUrl, sc.fetchAndStoreSegment)
 	}
@@ -349,7 +344,7 @@ func (sc *StreamChecker) OnNewMpd(mpde *mpd.MPD) error {
 }
 
 // ZeroIfNil is a short hand to evaluate a *uint64
-func ZeroIfNil(in *uint64) uint64 {
+func ZeroIfNil[T int64 | uint64](in *T) T {
 	if in == nil {
 		return 0
 	}
@@ -379,13 +374,7 @@ func (sc *StreamChecker) walkMpd(mpde *mpd.MPD) error {
 	}
 	// Log events
 	for _, period := range mpde.Period {
-		// Calculate period start
-		var start time.Duration
-		if period.Start != nil {
-			startmed, _ := (*period.Start).ToNanoseconds()
-			start = time.Duration(startmed)
-		}
-		periodStart := ast.Add(start)
+		periodStart := ast.Add(PeriodStart(period))
 		for _, eventStream := range period.EventStream {
 			schemeIdUri := EmptyIfNil(eventStream.SchemeIdUri)
 			timescale := ZeroIfNil(eventStream.Timescale)
@@ -401,7 +390,7 @@ func (sc *StreamChecker) walkMpd(mpde *mpd.MPD) error {
 				// signal, content
 				wallSpliceStart := periodStart.Add(TLP2Duration(int64(pt-pto), timescale))
 				wallSpliceDuration := TLP2Duration(int64(duration), timescale)
-				sc.logger.Info().Msgf("SCTE35 Id: %d Duration: %s Time %s", event.Id, wallSpliceDuration, shortT(wallSpliceStart))
+				//sc.logger.Info().Msgf("SCTE35 Id: %d Duration: %s Time %s", event.Id, wallSpliceDuration, shortT(wallSpliceStart))
 				// store
 				sc.upcomingSplices.AddIfNew(wallSpliceStart)
 				sc.upcomingSplices.AddIfNew(wallSpliceStart.Add(wallSpliceDuration))
@@ -463,13 +452,7 @@ ASloop:
 				if segTemp == nil || segTemp.SegmentTimeline == nil || len(segTemp.SegmentTimeline.S) == 0 {
 					continue ASloop
 				}
-				// Calculate period start
-				var start time.Duration
-				if period.Start != nil {
-					startmed, _ := (*period.Start).ToNanoseconds()
-					start = time.Duration(startmed)
-				}
-				periodStart := ast.Add(start)
+				periodStart := ast.Add(PeriodStart(period))
 				from, to := sumSegmentTemplate(segTemp, periodStart)
 				if from.IsZero() {
 					for _, pres := range as.Representations {
@@ -485,11 +468,11 @@ ASloop:
 						if !sp.Before(t) && sp.Before(t.Add(d)) {
 							offset := sp.Sub(t)
 							if offset > d/2 {
-								sc.logger.Info().Msgf("Early %s to %s Len %s", RoundTo(d-offset, time.Millisecond), shortT(t.Add(d)), d)
+								sc.logger.Debug().Msgf("Early %s to %s Len %s", RoundTo(d-offset, time.Millisecond), shortT(t.Add(d)), d)
 							} else if offset != 0 {
-								sc.logger.Info().Msgf("Late  %s to %s Len %s", RoundTo(offset, time.Millisecond), shortT(t), d)
+								sc.logger.Debug().Msgf("Late  %s to %s Len %s", RoundTo(offset, time.Millisecond), shortT(t), d)
 							} else {
-								sc.logger.Info().Msgf("Exactly at %s Len %s", shortT(t), d)
+								sc.logger.Debug().Msgf("Exactly at %s Len %s", shortT(t), d)
 							}
 						}
 					})
