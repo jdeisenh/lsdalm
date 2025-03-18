@@ -60,6 +60,8 @@ type StreamChecker struct {
 	// State
 	initialPeriod   *mpd.Period // The first period ever fetched, stream format of initial period
 	upcomingSplices SpliceList  // SCTE-Markers announced
+	lastMpd         *mpd.MPD
+	lastDate        string
 }
 
 func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, fetchMode FetchMode, logger zerolog.Logger, workers int) (*StreamChecker, error) {
@@ -245,6 +247,9 @@ func (sc *StreamChecker) fetchAndStoreManifest() error {
 	}
 
 	req.Header.Set("User-Agent", sc.userAgent)
+	if sc.lastDate != "" {
+		req.Header.Set("If-Modified-Since", sc.lastDate)
+	}
 
 	resp, err := sc.client.Do(req)
 	if err != nil {
@@ -258,6 +263,11 @@ func (sc *StreamChecker) fetchAndStoreManifest() error {
 	if err != nil {
 		sc.logger.Error().Err(err).Str("source", sc.sourceUrl.String()).Msg("Get Manifest data")
 		return err
+	}
+	if resp.StatusCode == http.StatusNotModified {
+		sc.logger.Debug().Str("url", sc.sourceUrl.String()).Msg("No update")
+		return nil
+
 	}
 	if resp.StatusCode != http.StatusOK {
 		sc.logger.Warn().Int("status", resp.StatusCode).Msg("Manifest fetch")
@@ -285,6 +295,12 @@ func (sc *StreamChecker) fetchAndStoreManifest() error {
 		return sc.fetchAndStoreManifest()
 
 	}
+	if resp.Header.Get("Date") == sc.lastDate {
+		sc.logger.Debug().Str("url", sc.sourceUrl.String()).Msg("No update")
+		return nil
+	}
+
+	sc.lastDate = resp.Header.Get("Date")
 
 	if sc.dumpdir != "" {
 		// Store the manifest
@@ -309,9 +325,25 @@ func (sc *StreamChecker) fetchAndStoreManifest() error {
 		sc.logger.Debug().Msg(string(contents))
 		return err
 	}
-	err = sc.walkMpd(mpd)
+
+	err = sc.OnNewMpd(mpd)
+	return err
+
+}
+
+func (sc *StreamChecker) DiffMpd(mpde *mpd.MPD) error {
+	//changelog.err := diff.Diff(sc.lastMpd, mpde)
+	//sc.logger.Info().Msgf("Diff: %w %+v", err, changelog)
+	return nil
+}
+
+func (sc *StreamChecker) OnNewMpd(mpde *mpd.MPD) error {
+
+	err := sc.DiffMpd(mpde)
+	sc.lastMpd = mpde
+	err = sc.walkMpd(mpde)
 	if sc.fetchMode > MODE_NOFETCH {
-		err = onAllSegmentUrls(mpd, sc.sourceUrl, sc.fetchAndStoreSegment)
+		err = onAllSegmentUrls(mpde, sc.sourceUrl, sc.fetchAndStoreSegment)
 	}
 	return err
 }
