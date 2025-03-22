@@ -9,16 +9,31 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// MpdDiffer tracks changes between manifest updates
 type MpdDiffer struct {
-	logger  zerolog.Logger // Logger instance
-	lastMpd *mpd.MPD
-	ast     time.Time
+	logger      zerolog.Logger // Logger instance
+	lastMpd     *mpd.MPD
+	ast         time.Time
+	onNewPeriod []func(period *mpd.Period)
+	onNewEvent  []func(event *mpd.Event, scheme string, at time.Time, duration time.Duration)
 }
 
 func NewMpdDiffer(logger zerolog.Logger) *MpdDiffer {
 	return &MpdDiffer{
 		logger: logger,
 	}
+}
+
+// AddOnNewEvent adds a callback to be executed when a new Event appears
+func (mpdiffer *MpdDiffer) AddOnNewEvent(event func(event *mpd.Event, scheme string, at time.Time, duration time.Duration)) {
+
+	mpdiffer.onNewEvent = append(mpdiffer.onNewEvent, event)
+}
+
+// AddOnNewEvent adds a callback to be executed when a new Period appears
+func (mpdiffer *MpdDiffer) AddOnNewPeriod(event func(period *mpd.Period)) {
+
+	mpdiffer.onNewPeriod = append(mpdiffer.onNewPeriod, event)
 }
 
 func Equal[C xsd.DateTime | xsd.Duration | string](a, b *C) bool {
@@ -167,7 +182,9 @@ func (md *MpdDiffer) AddPeriod(cur *mpd.Period) error {
 			timescale := ZeroIfNil(cures.Timescale)
 			at := periodStart.Add(TLP2Duration(int64(to), timescale))
 			duration := TLP2Duration(int64(ZeroIfNil(curee.Duration)), timescale)
-			md.OnNewEvent(&curee, EmptyIfNil(cures.SchemeIdUri), at, duration)
+			for _, cb := range md.onNewEvent {
+				cb(&curee, EmptyIfNil(cures.SchemeIdUri), at, duration)
+			}
 		}
 	}
 	return nil
@@ -222,7 +239,9 @@ func (md *MpdDiffer) DiffPeriod(old, cur *mpd.Period) error {
 				timescale := ZeroIfNil(cures.Timescale)
 				at := periodStart.Add(TLP2Duration(int64(to), timescale))
 				duration := TLP2Duration(int64(ZeroIfNil(curee.Duration)), timescale)
-				md.OnNewEvent(&curee, EmptyIfNil(cures.SchemeIdUri), at, duration)
+				for _, cb := range md.onNewEvent {
+					cb(&curee, EmptyIfNil(cures.SchemeIdUri), at, duration)
+				}
 			}
 		}
 	}
@@ -241,7 +260,9 @@ func (md *MpdDiffer) Update(mpde *mpd.MPD) error {
 		}
 		for _, newp := range cur.Period {
 			md.AddPeriod(newp)
-			md.OnNewPeriod(newp)
+			for _, cb := range md.onNewPeriod {
+				cb(newp)
+			}
 		}
 		return nil
 	}
@@ -259,16 +280,10 @@ func (md *MpdDiffer) Update(mpde *mpd.MPD) error {
 	}
 	for _, newp := range cur.Period {
 		if oldp := PeriodById(old.Period, newp.ID); oldp == nil {
-			md.OnNewPeriod(newp)
+			for _, cb := range md.onNewPeriod {
+				cb(newp)
+			}
 		}
 	}
 	return nil
-}
-
-func (md *MpdDiffer) OnNewPeriod(period *mpd.Period) {
-	md.logger.Warn().Msgf("New Period %s starts %s", EmptyIfNil(period.ID), md.ast.Add(PeriodStart(period)))
-}
-
-func (md *MpdDiffer) OnNewEvent(event *mpd.Event, scheme string, at time.Time, duration time.Duration) {
-	md.logger.Info().Msgf("New Event %s:%d at %s Duration %s", scheme, event.Id, at, duration)
 }

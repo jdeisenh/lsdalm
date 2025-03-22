@@ -140,6 +140,15 @@ func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, f
 			go st.fetcher()
 		}
 	}
+
+	st.mpdDiffer.AddOnNewPeriod(func(period *mpd.Period) {
+		logger.Info().Msgf("New Period %s starts %s", EmptyIfNil(period.ID), st.mpdDiffer.ast.Add(PeriodStart(period)))
+	})
+
+	st.mpdDiffer.AddOnNewEvent(func(event *mpd.Event, scheme string, at time.Time, duration time.Duration) {
+		logger.Info().Msgf("New Event %s:%d at %s Duration %s", scheme, event.Id, at, duration)
+	})
+
 	return st, nil
 }
 
