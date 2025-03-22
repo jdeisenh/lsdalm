@@ -37,13 +37,14 @@ const (
 	MODE_STORE          // verification and store plus store
 )
 
+// One of above constants
+type FetchMode int
+
 // URL and data to verify for a single segment
 type SegmentInfo struct {
 	Url  *url.URL
 	T, D time.Duration
 }
-
-type FetchMode int
 
 type StreamChecker struct {
 	name        string           // Name, display only
@@ -610,7 +611,7 @@ func (sc *StreamChecker) Done() {
 	time.Sleep(time.Second)
 }
 
-// Goroutine
+// Goroutine executing media fetches
 func (sc *StreamChecker) fetcher() {
 
 	for i := range sc.fetchqueue {

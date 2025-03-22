@@ -352,6 +352,34 @@ func (sc *StreamReplay) getPtsRange(mpde *mpd.MPD, mimetype string) (time.Time, 
 	return earliest, latest, nil
 }
 
+func GetArg(qm map[string][]string, name string) string {
+
+	sm, ok := qm[name]
+	if !ok {
+		return ""
+	}
+	// Thats probably redundant
+	if len(sm) < 0 {
+		return ""
+	}
+	// Only look at the first value
+	return sm[0]
+}
+
+var NotFound = errors.New("Argument not found")
+
+func GetIntArg(qm map[string][]string, name string) (int, error) {
+	v := GetArg(qm, name)
+	if v == "" {
+		return 0, NotFound
+	}
+	r, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, err
+	}
+	return r, nil
+}
+
 // Handler serves manifests
 func (sc *StreamReplay) Handler(w http.ResponseWriter, r *http.Request) {
 
