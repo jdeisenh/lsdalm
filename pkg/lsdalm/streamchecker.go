@@ -476,8 +476,8 @@ func (sc *StreamChecker) walkMpd(mpde *mpd.MPD) error {
 				wallSpliceDuration := TLP2Duration(int64(duration), timescale)
 				//sc.logger.Info().Msgf("SCTE35 Id: %d Duration: %s Time %s", event.Id, wallSpliceDuration, shortT(wallSpliceStart))
 				// store
-				sc.upcomingSplices.AddIfNew(wallSpliceStart)
-				sc.upcomingSplices.AddIfNew(wallSpliceStart.Add(wallSpliceDuration))
+				sc.upcomingSplices.AddIfNew(wallSpliceStart, fmt.Sprintf("evid_%d", event.Id))
+				sc.upcomingSplices.AddIfNew(wallSpliceStart.Add(wallSpliceDuration), fmt.Sprintf("evid_%d_end", event.Id))
 			}
 		}
 		_ = periodStart
@@ -549,8 +549,8 @@ ASloop:
 				for _, sp := range sc.upcomingSplices.InRange(from, to) {
 					//sc.logger.Info().Msgf("Found splice at %s", shortT(sp))
 					walkSegmentTemplateTimings(segTemp, periodStart, func(t time.Time, d time.Duration) {
-						if !sp.Before(t) && sp.Before(t.Add(d)) {
-							offset := sp.Sub(t)
+						if !sp.at.Before(t) && sp.at.Before(t.Add(d)) {
+							offset := sp.at.Sub(t)
 							if offset > d/2 {
 								sc.logger.Debug().Msgf("Early %s to %s Len %s", RoundTo(d-offset, time.Millisecond), shortT(t.Add(d)), d)
 							} else if offset != 0 {

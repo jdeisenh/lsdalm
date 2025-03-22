@@ -281,7 +281,7 @@ func (md *MpdDiffer) Update(mpde *mpd.MPD) error {
 		if curp := PeriodById(cur.Period, oldp.ID); curp != nil {
 			md.DiffPeriod(oldp, curp)
 		} else {
-			md.logger.Warn().Msgf("Period ID %s gone", EmptyIfNil(oldp.ID))
+			md.logger.Debug().Msgf("Period ID %s gone", EmptyIfNil(oldp.ID))
 		}
 	}
 	for _, newp := range cur.Period {
