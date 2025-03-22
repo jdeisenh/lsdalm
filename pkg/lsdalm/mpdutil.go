@@ -250,8 +250,11 @@ func ReBaseMpd(mpde *mpd.MPD, originalBase *url.URL, localMedia bool) *mpd.MPD {
 		*np = *period
 
 		// Expand to full URL first
-		if originalBase != nil && len(np.BaseURL) > 0 && np.BaseURL[0].Value != "" {
-			baseurl := np.BaseURL[0].Value
+		if originalBase != nil {
+			baseurl := ""
+			if len(np.BaseURL) > 0 {
+				baseurl = np.BaseURL[0].Value
+			}
 			baseurlUrl := ConcatURL(originalBase, baseurl)
 			np.BaseURL = make([]*mpd.BaseURL, 0, 1)
 			nburl := new(mpd.BaseURL)
