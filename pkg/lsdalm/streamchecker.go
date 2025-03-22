@@ -1,6 +1,7 @@
 package lsdalm
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/jdeisenh/lsdalm/pkg/go-mpd"
 	"github.com/rs/zerolog"
 )
@@ -27,7 +29,7 @@ const (
 	DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 )
 
-// What to do with the media segments
+// Modes support for checking media segments
 const (
 	MODE_NOFETCH = iota // Do not fetch media segments
 	MODE_ACCESS         // just access by a "HEAD" request, dont get data
@@ -35,19 +37,25 @@ const (
 	MODE_STORE          // verification and store plus store
 )
 
+// URL and data to verify for a single segment
+type SegmentInfo struct {
+	Url  *url.URL
+	T, D time.Duration
+}
+
 type FetchMode int
 
 type StreamChecker struct {
-	name        string        // Name, display only
-	sourceUrl   *url.URL      // Manifest source URL
-	dumpdir     string        // Directory we write manifests and segments
-	manifestDir string        // Subdirectory of above for manifests
-	userAgent   string        // Agent used in outgoing http
-	updateFreq  time.Duration // Update freq for manifests
-	fetchqueue  chan *url.URL // Buffered chan for async media segment requests
-	done        chan struct{} // Chan to stop background goroutines
-	ticker      *time.Ticker  // Ticker for timing manifest requests
-	fetchMode   FetchMode     // Media segment fetch mode: one of MODE_
+	name        string           // Name, display only
+	sourceUrl   *url.URL         // Manifest source URL
+	dumpdir     string           // Directory we write manifests and segments
+	manifestDir string           // Subdirectory of above for manifests
+	userAgent   string           // Agent used in outgoing http
+	updateFreq  time.Duration    // Update freq for manifests
+	fetchqueue  chan SegmentInfo // Buffered chan for async media segment requests
+	done        chan struct{}    // Chan to stop background goroutines
+	ticker      *time.Ticker     // Ticker for timing manifest requests
+	fetchMode   FetchMode        // Media segment fetch mode: one of MODE_
 
 	logger zerolog.Logger // Logger instance
 	client *http.Client
@@ -70,7 +78,7 @@ func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, f
 	st := &StreamChecker{
 		name:       name,
 		updateFreq: updateFreq,
-		fetchqueue: make(chan *url.URL, FetchQueueSize),
+		fetchqueue: make(chan SegmentInfo, FetchQueueSize),
 		logger:     logger.With().Str("channel", name).Logger(),
 		done:       make(chan struct{}),
 		fetchMode:  fetchMode,
@@ -144,25 +152,33 @@ func (sc *StreamChecker) AddFetchCallback(f func(string, time.Time)) {
 	sc.onFetch = append(sc.onFetch, f)
 }
 
+func (sc *StreamChecker) fetchAndStoreSegment(url *url.URL, t, d time.Duration) error {
+	return sc.fetchAndStoreSegmentS(SegmentInfo{
+		Url: url,
+		T:   t,
+		D:   d,
+	})
+}
+
 // fetchAndStoreSegment queues an URL for fetching
-func (sc *StreamChecker) fetchAndStoreSegment(fetchthis *url.URL) error {
+func (sc *StreamChecker) fetchAndStoreSegmentS(fetchthis SegmentInfo) error {
 
 	// Check what we already have.
 	// This does not handle errors, retries, everything else
 	sc.haveMutex.Lock()
-	if _, ok := sc.haveMap[fetchthis.Path]; ok {
+	if _, ok := sc.haveMap[fetchthis.Url.Path]; ok {
 		sc.haveMutex.Unlock()
 		// Don't fetch again
-		sc.logger.Trace().Msgf("Already in queue%s", fetchthis.Path)
+		sc.logger.Trace().Msgf("Already in queue%s", fetchthis.Url.Path)
 		return nil
 	}
 	sc.haveMutex.Unlock()
 
-	localpath := path.Join(sc.dumpdir, fetchthis.Path)
+	localpath := path.Join(sc.dumpdir, fetchthis.Url.Path)
 	_, err := os.Stat(localpath)
 	if err == nil {
 		// Assume file exists
-		sc.logger.Debug().Msgf("Have file %s", fetchthis.Path)
+		sc.logger.Debug().Msgf("Have file %s", fetchthis.Url.Path)
 		return nil
 	}
 	sc.logger.Debug().Int("QL", len(sc.fetchqueue)).Msg("Queue size")
@@ -170,7 +186,7 @@ func (sc *StreamChecker) fetchAndStoreSegment(fetchthis *url.URL) error {
 	select {
 	case sc.fetchqueue <- fetchthis:
 		sc.haveMutex.Lock()
-		sc.haveMap[fetchthis.Path] = true
+		sc.haveMap[fetchthis.Url.Path] = true
 		sc.haveMutex.Unlock()
 		return nil
 	default:
@@ -181,12 +197,12 @@ func (sc *StreamChecker) fetchAndStoreSegment(fetchthis *url.URL) error {
 }
 
 // executeFetchAndStore gets a segment and stores it
-func (sc *StreamChecker) executeFetchAndStore(fetchme *url.URL) error {
+func (sc *StreamChecker) executeFetchAndStore(fetchme SegmentInfo) error {
 
 	// Create path
 	localpath := ""
 	if sc.fetchMode >= MODE_STORE {
-		localpath = path.Join(sc.dumpdir, fetchme.Path)
+		localpath = path.Join(sc.dumpdir, fetchme.Url.Path)
 		os.MkdirAll(path.Dir(localpath), 0777)
 		_, err := os.Stat(localpath)
 		if err == nil {
@@ -194,22 +210,24 @@ func (sc *StreamChecker) executeFetchAndStore(fetchme *url.URL) error {
 			return nil
 		}
 	}
+	// Decide mode: HEAD for access check, GET for everything else
 	mode := "HEAD"
 	if sc.fetchMode > MODE_ACCESS {
 		mode = "GET"
 	}
-	req, err := http.NewRequest(mode, fetchme.String(), nil)
+	req, err := http.NewRequest(mode, fetchme.Url.String(), nil)
 	if err != nil {
-		sc.logger.Warn().Err(err).Str("url", fetchme.String()).Msg("Create Request")
+		sc.logger.Warn().Err(err).Str("url", fetchme.Url.String()).Msg("Create Request")
 		// Handle error
 		return err
 	}
 
+	// Set a (fixed) User Agent, there are sources disciminiating Agents
 	req.Header.Set("User-Agent", sc.userAgent)
 
 	resp, err := sc.client.Do(req)
 	if err != nil {
-		sc.logger.Warn().Err(err).Str("url", fetchme.String()).Msg("Fetch Segment")
+		sc.logger.Warn().Err(err).Str("url", fetchme.Url.String()).Msg("Fetch Segment")
 		// Handle error
 		return err
 	}
@@ -217,16 +235,33 @@ func (sc *StreamChecker) executeFetchAndStore(fetchme *url.URL) error {
 	if resp.Body != nil {
 		defer resp.Body.Close()
 	}
+
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		sc.logger.Error().Err(err).Str("url", fetchme.String()).Msg("Read Segment data")
+		sc.logger.Error().Err(err).Str("url", fetchme.Url.String()).Msg("Read Segment data")
 		return err
 	}
 	if resp.StatusCode != http.StatusOK {
-		sc.logger.Warn().Str("Segment", fetchme.String()).Int("status", resp.StatusCode).Msg("Status")
+		sc.logger.Warn().Str("Segment", fetchme.Url.String()).Int("status", resp.StatusCode).Msg("Status")
 		return errors.New("Not successful")
 	}
-	sc.logger.Debug().Str("Segment", fetchme.String()).Msg("Got")
+	// Check the segment
+	if sc.fetchMode >= MODE_VERIFY {
+		t, d, err := sc.verifySegment(body)
+		if err != nil {
+			sc.logger.Error().Err(err).Msg("Parse segment")
+		} else {
+			sc.logger.Trace().Msgf("T:%s D:%s", t, d)
+			if fetchme.T != 0 || fetchme.D != 0 {
+				if t != fetchme.T || d != fetchme.D {
+					sc.logger.Error().Str("url", fetchme.Url.String()).Msg("Mediasegment Offset/Duration Mismatch")
+					sc.logger.Error().Str("D", fetchme.D.String()).Str("T", fetchme.T.String()).Msg("Manifest")
+					sc.logger.Error().Str("D", d.String()).Str("T", t.String()).Msg("Segment")
+				}
+			}
+		}
+	}
+	sc.logger.Debug().Str("Segment", fetchme.Url.String()).Msg("Got")
 	if sc.dumpdir != "" && sc.fetchMode >= MODE_STORE {
 		err = os.WriteFile(localpath, body, 0644)
 		if err != nil {
@@ -235,6 +270,39 @@ func (sc *StreamChecker) executeFetchAndStore(fetchme *url.URL) error {
 		}
 	}
 	return nil
+}
+
+func (sc *StreamChecker) verifySegment(buf []byte) (offset, duration time.Duration, err error) {
+	buffer := bytes.NewReader(buf)
+	parsedMp4, lerr := mp4.DecodeFile(buffer, mp4.WithDecodeMode(mp4.DecModeLazyMdat))
+	if lerr != nil {
+		err = fmt.Errorf("could not parse input file: %w", err)
+		return
+	}
+	for _, box := range parsedMp4.Children {
+		switch box.Type() {
+		case "sidx":
+			//err = box.Info(w, specificBoxLevels, "", "  ")
+			sidx := box.(*mp4.SidxBox)
+			var ssd uint32
+			for _, m := range sidx.SidxRefs {
+				ssd += m.SubSegmentDuration
+			}
+			// Convert to duration. Looks complicated, tries to avoid rounding and overflow
+			offset = time.Duration(sidx.EarliestPresentationTime/uint64(sidx.Timescale))*time.Second +
+				time.Duration(sidx.EarliestPresentationTime%uint64(sidx.Timescale))*time.Second/time.Duration(sidx.Timescale)
+			duration = time.Duration(ssd/sidx.Timescale)*time.Second +
+				time.Duration(ssd%sidx.Timescale)*time.Second/time.Duration(sidx.Timescale)
+			//sc.logger.Info().Msgf("Start at: %s Duration %s", offset, duration)
+
+		default:
+			//sc.logger.Info().Msgf("%s:%d", box.Type(), box.Size())
+			//err = box.Info(os.Stderr, "all:1", "", "  ")
+		}
+
+	}
+
+	return
 }
 
 // fetchAndStore gets a manifest from URL, decode the manifest, dump stats, and calls back the action
@@ -335,8 +403,13 @@ func (sc *StreamChecker) fetchAndStoreManifest() error {
 
 func (sc *StreamChecker) OnNewMpd(mpde *mpd.MPD) error {
 
-	err := sc.mpdDiffer.Update(mpde)
-	//err = sc.walkMpd(mpde)
+	if err := sc.mpdDiffer.Update(mpde); err != nil {
+		return err
+	}
+	if err := sc.walkMpd(mpde); err != nil {
+		return err
+	}
+	var err error
 	if sc.fetchMode > MODE_NOFETCH {
 		err = onAllSegmentUrls(mpde, sc.sourceUrl, sc.fetchAndStoreSegment)
 	}
@@ -531,7 +604,7 @@ forloop:
 // Done terminates the Streamchecker gracefully
 func (sc *StreamChecker) Done() {
 	close(sc.done)
-	sc.fetchqueue <- nil
+	sc.fetchqueue <- SegmentInfo{}
 	// Sync exit (lame)
 	time.Sleep(time.Second)
 }
@@ -540,12 +613,12 @@ func (sc *StreamChecker) Done() {
 func (sc *StreamChecker) fetcher() {
 
 	for i := range sc.fetchqueue {
-		if i == nil {
+		if i.Url == nil {
 			// Exit signal
 			break
 		}
 		sc.haveMutex.Lock()
-		delete(sc.haveMap, i.Path)
+		delete(sc.haveMap, i.Url.Path)
 		sc.haveMutex.Unlock()
 
 		sc.executeFetchAndStore(i)

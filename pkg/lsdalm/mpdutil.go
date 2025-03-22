@@ -81,12 +81,12 @@ func Append(st *mpd.SegmentTimeline, t, d uint64, r int64) {
 }
 
 // walkSegmentTemplate walks a segmentTemplate and calls 'action' on all media Segments with their full URL
-func walkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId string, action func(*url.URL) error) error {
+func walkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId string, action func(*url.URL, time.Duration, time.Duration) error) error {
 
 	pathTemplate := NewPathReplacer(*st.Media)
 	if st.Initialization != nil {
 		init := strings.Replace(*st.Initialization, "$RepresentationID$", repId, 1)
-		action(segmentPath.JoinPath(init))
+		action(segmentPath.JoinPath(init), 0, 0)
 	}
 	// Walk the Segment
 	if st.SegmentTimeline == nil {
@@ -97,12 +97,16 @@ func walkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId st
 	if st.StartNumber != nil {
 		number = int(*st.StartNumber)
 	}
+	timescale := uint64(1)
+	if st.Timescale != nil {
+		timescale = *st.Timescale
+	}
 
-	for t := range All(stl) {
+	for t, d := range All(stl) {
 		ppa := pathTemplate.ToPath(int(t), number, repId)
 		//fmt.Printf("Path %s:%s\n", media, ppa)
 		fullUrl := segmentPath.JoinPath(ppa)
-		action(fullUrl)
+		action(fullUrl, TLP2Duration(int64(t), timescale), TLP2Duration(int64(d), timescale))
 		number++
 	}
 	return nil
@@ -207,7 +211,7 @@ func shiftPto(st *mpd.SegmentTemplate, shiftValue time.Duration) {
 
 // Iterate through all periods, representation, segmentTimeline and
 // call 'action' with the URL
-func onAllSegmentUrls(mpd *mpd.MPD, mpdUrl *url.URL, action func(*url.URL) error) error {
+func onAllSegmentUrls(mpd *mpd.MPD, mpdUrl *url.URL, action func(*url.URL, time.Duration, time.Duration) error) error {
 	// Walk all Periods, AdaptationSets and Representations
 	for _, period := range mpd.Period {
 		segmentPath := segmentPathFromPeriod(period, mpdUrl)

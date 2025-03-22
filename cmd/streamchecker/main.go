@@ -22,7 +22,7 @@ func main() {
 	debug := flag.Bool("debug", false, "set log level to debug")
 	dir := flag.String("dumpdir", "", "Directory to store manifests and segments")
 	accessMedia := flag.Bool("accessmedia", false, "Access all Media segments")
-	//verifyMedia := flag.Bool("verifymedia", false, "Verify all Media segments")
+	verifyMedia := flag.Bool("verifymedia", false, "Verify all Media segments")
 	storeMedia := flag.Bool("storemedia", false, "Store all Media segments")
 	workers := flag.Int("workers", 1, "Number of parallel downloads")
 	listen := flag.String("replayport", "", "socket:Port for timeshift replay server (e.g. :8080)")
@@ -48,7 +48,8 @@ func main() {
 	// Order is important for precedence
 	case *storeMedia:
 		mode = lsdalm.MODE_STORE
-	//case verifymedia:
+	case *verifyMedia:
+		mode = lsdalm.MODE_VERIFY
 	case *accessMedia:
 		mode = lsdalm.MODE_ACCESS
 	}
@@ -59,7 +60,7 @@ func main() {
 	}
 
 	// If a port is given, we handle replay requests
-	if *listen != "" && *dir!="" {
+	if *listen != "" && *dir != "" {
 		var err error
 		sr, err := lsdalm.NewStreamReplay(sg.GetDumpDir(), logger)
 		if err != nil {
@@ -74,7 +75,7 @@ func main() {
 			go func() {
 				logger.Fatal().Err(http.ListenAndServe(*listen, nil)).Send()
 			}()
-			logger.Info().Msgf("Starting server listening on %s",*listen)
+			logger.Info().Msgf("Starting server listening on %s", *listen)
 		}
 	}
 
