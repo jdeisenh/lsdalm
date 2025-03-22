@@ -25,7 +25,7 @@ const (
 	FetchQueueSize   = 5000                                // Max number of outstanding requests in queue
 	maxGapLog        = 5 * time.Millisecond                // Warn above this gap length
 	dateShortFmt     = "15:04:05.00"                       // Used in logging dates
-	schemeScteXml    = "urn:scte:scte35:2014:xml+bin"      // The one scte scheme we support right now
+	SchemeScteXml    = "urn:scte:scte35:2014:xml+bin"      // The one scte scheme we support right now
 	DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 )
 
@@ -463,7 +463,7 @@ func (sc *StreamChecker) walkMpd(mpde *mpd.MPD) error {
 			schemeIdUri := EmptyIfNil(eventStream.SchemeIdUri)
 			timescale := ZeroIfNil(eventStream.Timescale)
 			pto := ZeroIfNil(eventStream.PresentationTimeOffset)
-			if schemeIdUri != schemeScteXml {
+			if schemeIdUri != SchemeScteXml {
 				continue
 			}
 
@@ -537,11 +537,11 @@ ASloop:
 					continue ASloop
 				}
 				periodStart := ast.Add(PeriodStart(period))
-				from, to := sumSegmentTemplate(segTemp, periodStart)
+				from, to := SumSegmentTemplate(segTemp, periodStart)
 				if from.IsZero() {
 					for _, pres := range as.Representations {
 						if pres.SegmentTemplate != nil {
-							from, to = sumSegmentTemplate(pres.SegmentTemplate, periodStart)
+							from, to = SumSegmentTemplate(pres.SegmentTemplate, periodStart)
 							break
 						}
 					}

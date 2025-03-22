@@ -107,7 +107,7 @@ func (md *MpdDiffer) DiffSegmentTimeline(old, cur *mpd.SegmentTimeline) error {
 
 func (md *MpdDiffer) AddSegmentTemplate(cur *mpd.SegmentTemplate, start time.Time, id string) error {
 
-	cf, ct := sumSegmentTemplate(cur, start)
+	cf, ct := SumSegmentTemplate(cur, start)
 
 	md.logger.Debug().Msgf("%s: Dropped %s Added %s", id, "    ", Round(ct.Sub(cf)))
 	return nil
@@ -126,8 +126,8 @@ func (md *MpdDiffer) DiffSegmentTemplate(old, cur *mpd.SegmentTemplate, start ti
 		md.DiffSegmentTimeline(oldt, curt)
 	*/
 
-	of, ot := sumSegmentTemplate(old, start)
-	cf, ct := sumSegmentTemplate(cur, start)
+	of, ot := SumSegmentTemplate(old, start)
+	cf, ct := SumSegmentTemplate(cur, start)
 
 	if cf != of || ot != ct {
 		md.logger.Debug().Msgf("%s: Dropped %8s Added %8s", id, Round(cf.Sub(of)), Round(ct.Sub(ot)))

@@ -112,8 +112,8 @@ func walkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId st
 	return nil
 }
 
-// sumSegmentTemplate returns first and last presentationTime of a SegmentTemplate with Timeline
-func sumSegmentTemplate(st *mpd.SegmentTemplate, periodStart time.Time) (from, to time.Time) {
+// SumSegmentTemplate returns first and last presentationTime of a SegmentTemplate with Timeline
+func SumSegmentTemplate(st *mpd.SegmentTemplate, periodStart time.Time) (from, to time.Time) {
 
 	if st == nil {
 		return
@@ -137,7 +137,7 @@ func sumSegmentTemplate(st *mpd.SegmentTemplate, periodStart time.Time) (from, t
 	return
 }
 
-// sumSegmentTemplate returns first and last presentationTime of a SegmentTemplate with Timeline
+// walkegmentTemplate walks the template and calls action
 func walkSegmentTemplateTimings(st *mpd.SegmentTemplate, periodStart time.Time, action func(time.Time, time.Duration)) {
 
 	if st == nil {
@@ -193,7 +193,7 @@ func segmentPathFromPeriod(period *mpd.Period, mpdUrl *url.URL) *url.URL {
 }
 
 // shiftPto adds 'shiftValue' to the presentationTimeOffset
-func shiftPto(st *mpd.SegmentTemplate, shiftValue time.Duration) {
+func ShiftPto(st *mpd.SegmentTemplate, shiftValue time.Duration) {
 
 	timescale := uint64(1)
 	if st.Timescale != nil {

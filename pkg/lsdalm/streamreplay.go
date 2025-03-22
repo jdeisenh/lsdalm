@@ -291,11 +291,11 @@ func (sc *StreamReplay) getPtsRange(mpde *mpd.MPD, mimetype string) (time.Time, 
 				start = time.Duration(startmed)
 			}
 			periodStart := ast.Add(start)
-			from, to := sumSegmentTemplate(as.SegmentTemplate, periodStart)
+			from, to := SumSegmentTemplate(as.SegmentTemplate, periodStart)
 			if from.IsZero() {
 				for _, pres := range as.Representations {
 					if pres.SegmentTemplate != nil {
-						from, to = sumSegmentTemplate(pres.SegmentTemplate, periodStart)
+						from, to = SumSegmentTemplate(pres.SegmentTemplate, periodStart)
 						break
 					}
 				}

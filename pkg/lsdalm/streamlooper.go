@@ -128,7 +128,7 @@ func (sc *StreamLooper) BuildMpd(ptsShift time.Duration, id string, periodStart,
 
 		nstl.S = nstl.S[:0]
 		elements := sc.recording.Segments[asi]
-		shiftPto(nst, effectivePtsShift)
+		ShiftPto(nst, effectivePtsShift)
 		start := elements.start
 		timescale := ZeroIfNil(nst.Timescale)
 		pto := ZeroIfNil(nst.PresentationTimeOffset)
