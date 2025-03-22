@@ -549,8 +549,8 @@ ASloop:
 				for _, sp := range sc.upcomingSplices.InRange(from, to) {
 					//sc.logger.Info().Msgf("Found splice at %s", shortT(sp))
 					walkSegmentTemplateTimings(segTemp, periodStart, func(t time.Time, d time.Duration) {
-						if !sp.at.Before(t) && sp.at.Before(t.Add(d)) {
-							offset := sp.at.Sub(t)
+						if !sp.At.Before(t) && sp.At.Before(t.Add(d)) {
+							offset := sp.At.Sub(t)
 							if offset > d/2 {
 								sc.logger.Debug().Msgf("Early %s to %s Len %s", RoundTo(d-offset, time.Millisecond), shortT(t.Add(d)), d)
 							} else if offset != 0 {
