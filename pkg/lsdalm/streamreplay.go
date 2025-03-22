@@ -9,12 +9,10 @@ import (
 	"os"
 	"path"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/jdeisenh/lsdalm/pkg/go-mpd"
 	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 // StreamReplay can replay a recording as is, time-shifted, but otherwise not manipulated
@@ -169,27 +167,6 @@ func (sc *StreamReplay) getLoopMeta(at, now time.Time, requestDuration time.Dura
 	return
 }
 
-// baseToPath converts a Base URL to a absolute local path
-func baseToPath(base, prefix string) string {
-	if prefix == "" {
-		// No change
-		return base
-	}
-	var baseurl *url.URL
-	var err error
-	baseurl, err = url.Parse(base)
-	if err != nil {
-		log.Warn().Err(err).Msg("Parse URL")
-		return base
-	}
-	if strings.HasPrefix(baseurl.Path, "/") {
-		// Path only
-		return baseurl.Path
-	} else {
-		return path.Join(prefix, baseurl.Path)
-	}
-}
-
 // AdjustMpd adds a time offset to each Period in the Manifest, shifting the PresentationTime
 // Note that this will change the mpd, which only is not problem if its freshly reloaded
 func (sc *StreamReplay) AdjustMpd(mpde *mpd.MPD, shift time.Duration, localMedia bool) {
@@ -217,24 +194,6 @@ func (sc *StreamReplay) AdjustMpd(mpde *mpd.MPD, shift time.Duration, localMedia
 		}
 	}
 	return
-}
-
-// Concatenat URLs
-// If b is absolute, just use this
-// if not, append
-func ConcatURL(a *url.URL, br string) *url.URL {
-	b, err := url.Parse(br)
-	if err != nil {
-		log.Error().Err(err).Msg("Path extension")
-		return nil
-	}
-	if b.IsAbs() {
-		return b
-	} else {
-		// Cut to directory, extend by base path
-		joined := a.JoinPath(b.Path)
-		return joined
-	}
 }
 
 // Find a manifest at time 'at'

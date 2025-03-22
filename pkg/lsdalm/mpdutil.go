@@ -235,3 +235,87 @@ func onAllSegmentUrls(mpd *mpd.MPD, mpdUrl *url.URL, action func(*url.URL, time.
 	}
 	return nil
 }
+
+// ReBaseMpd wil change BaseURL, append path of originalBase and then, if localMedia is true, dropping the protocol/host
+func ReBaseMpd(mpde *mpd.MPD, originalBase *url.URL, localMedia bool) *mpd.MPD {
+	if len(mpde.Period) == 0 {
+		return nil
+	}
+	outMpd := new(mpd.MPD)
+	*outMpd = *mpde
+	outMpd.Period = make([]*mpd.Period, 0, 1)
+
+	for _, period := range mpde.Period {
+		np := new(mpd.Period)
+		*np = *period
+
+		// Expand to full URL first
+		if originalBase != nil && len(np.BaseURL) > 0 && np.BaseURL[0].Value != "" {
+			baseurl := np.BaseURL[0].Value
+			baseurlUrl := ConcatURL(originalBase, baseurl)
+			np.BaseURL = make([]*mpd.BaseURL, 0, 1)
+			nburl := new(mpd.BaseURL)
+			*nburl = *period.BaseURL[0]
+			np.BaseURL = append(np.BaseURL, nburl)
+			if localMedia {
+				np.BaseURL[0].Value = baseurlUrl.Path[1:]
+			} else {
+				np.BaseURL[0].Value = baseurlUrl.String()
+			}
+		}
+		outMpd.Period = append(outMpd.Period, np)
+
+	}
+	return outMpd
+}
+
+// mergeMpd appends the periods from mpd2 into mpd1,
+func mergeMpd(mpd1, mpd2 *mpd.MPD) *mpd.MPD {
+	if mpd1 == nil {
+		return mpd2
+	} else if mpd2 == nil {
+		return mpd1
+	} else {
+		mpd1.Period = append(mpd1.Period, mpd2.Period...)
+		return mpd1
+	}
+}
+
+// Concatenat URLs
+// If b is absolute, just use this
+// if not, append
+func ConcatURL(a *url.URL, br string) *url.URL {
+	b, err := url.Parse(br)
+	if err != nil {
+		log.Error().Err(err).Msg("Path extension")
+		return nil
+	}
+	if b.IsAbs() {
+		return b
+	} else {
+		// Cut to directory, extend by base path
+		joined := a.JoinPath(b.Path)
+		return joined
+	}
+}
+
+// baseToPath converts a Base URL to a absolute local path
+func baseToPath(base, prefix string) string {
+	if prefix == "" {
+		// No change
+		return base
+	}
+	var baseurl *url.URL
+	var err error
+	baseurl, err = url.Parse(base)
+	if err != nil {
+		log.Warn().Err(err).Msg("Parse URL")
+		return base
+	}
+	if strings.HasPrefix(baseurl.Path, "/") {
+		// Path only
+		return baseurl.Path
+	} else {
+		return path.Join(prefix, baseurl.Path)
+	}
+}

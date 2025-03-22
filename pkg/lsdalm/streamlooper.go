@@ -67,51 +67,6 @@ func NewStreamLooper(dumpdir string, logger zerolog.Logger) (*StreamLooper, erro
 	return st, nil
 }
 
-// AdjustMpd adds 'shift' to the 'start' attribute of each Period, shifting the PresentationTime
-func (sc *StreamLooper) AdjustMpd(mpde *mpd.MPD, originalBase *url.URL, localMedia bool) *mpd.MPD {
-	if len(mpde.Period) == 0 {
-		return nil
-	}
-	outMpd := new(mpd.MPD)
-	*outMpd = *mpde
-	outMpd.Period = make([]*mpd.Period, 0, 1)
-
-	for _, period := range mpde.Period {
-		np := new(mpd.Period)
-		*np = *period
-
-		// Expand to full URL first
-		if originalBase != nil && len(np.BaseURL) > 0 && np.BaseURL[0].Value != "" {
-			baseurl := np.BaseURL[0].Value
-			baseurlUrl := ConcatURL(originalBase, baseurl)
-			np.BaseURL = make([]*mpd.BaseURL, 0, 1)
-			nburl := new(mpd.BaseURL)
-			*nburl = *period.BaseURL[0]
-			np.BaseURL = append(np.BaseURL, nburl)
-			if localMedia {
-				np.BaseURL[0].Value = baseurlUrl.Path[1:]
-			} else {
-				np.BaseURL[0].Value = baseurlUrl.String()
-			}
-		}
-		outMpd.Period = append(outMpd.Period, np)
-
-	}
-	return outMpd
-}
-
-// mergeMpd appends the periods from mpd2 into mpd1,
-func (sc *StreamLooper) mergeMpd(mpd1, mpd2 *mpd.MPD) *mpd.MPD {
-	if mpd1 == nil {
-		return mpd2
-	} else if mpd2 == nil {
-		return mpd1
-	} else {
-		mpd1.Period = append(mpd1.Period, mpd2.Period...)
-		return mpd1
-	}
-}
-
 // BuildMpb takes the recordings original mpd and adds Segments for the indicated timestamps range
 // it also shifts the Timeline by 'shift' and assigns a new id
 // ptsShift: shift presentationTime
@@ -269,7 +224,7 @@ func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Durati
 				now,
 			)
 		}
-		mpdCurrent = sc.mergeMpd(mpdPrevious, mpdCurrent)
+		mpdCurrent = mergeMpd(mpdPrevious, mpdCurrent)
 	} else {
 		// No loop point
 		mpdCurrent = sc.BuildMpd(
@@ -280,7 +235,7 @@ func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Durati
 			now,
 		)
 	}
-	mpdCurrent = sc.AdjustMpd(mpdCurrent, sc.originalBaseUrl, sc.storageMeta.HaveMedia)
+	mpdCurrent = ReBaseMpd(mpdCurrent, sc.originalBaseUrl, sc.storageMeta.HaveMedia)
 	// re-encode
 	afterEncode, err := mpdCurrent.Encode()
 	if err != nil {
@@ -317,7 +272,7 @@ func (sc *StreamLooper) GetStatic() ([]byte, error) {
 	dur := DurationToXsdDuration(duration)
 	mpdCurrent.MediaPresentationDuration = &dur
 	mpdCurrent.Period[0].Duration = &dur
-	mpdCurrent = sc.AdjustMpd(mpdCurrent, sc.originalBaseUrl, sc.storageMeta.HaveMedia)
+	mpdCurrent = ReBaseMpd(mpdCurrent, sc.originalBaseUrl, sc.storageMeta.HaveMedia)
 	// re-encode
 	afterEncode, err := mpdCurrent.Encode()
 	if err != nil {
