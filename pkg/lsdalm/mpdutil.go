@@ -287,6 +287,9 @@ func mergeMpd(mpd1, mpd2 *mpd.MPD) *mpd.MPD {
 // If b is absolute, just use this
 // if not, append
 func ConcatURL(a *url.URL, br string) *url.URL {
+	if br == "" {
+		return a
+	}
 	b, err := url.Parse(br)
 	if err != nil {
 		log.Error().Err(err).Msg("Path extension")
