@@ -98,7 +98,7 @@ func fmtNano(buf []byte, v int64) int {
 	if v == 0 {
 		w++
 	} else {
-		for v > 0 && prec > 0 {
+		for prec > 0 {
 			digit := v % 10
 			if digit != 0 && zeroes {
 				zeroes = false
