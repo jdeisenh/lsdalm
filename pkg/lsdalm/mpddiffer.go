@@ -235,7 +235,7 @@ func (md *MpdDiffer) Update(mpde *mpd.MPD) error {
 	cur := mpde
 	defer func() { md.lastMpd = mpde }()
 	if old == nil {
-		// Firstone
+		// First one
 		if mpde.AvailabilityStartTime != nil {
 			md.ast = time.Time(*mpde.AvailabilityStartTime)
 		}

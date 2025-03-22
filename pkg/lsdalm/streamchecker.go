@@ -247,9 +247,9 @@ func (sc *StreamChecker) executeFetchAndStore(fetchme SegmentInfo) error {
 	}
 	// Check the segment
 	if sc.fetchMode >= MODE_VERIFY {
-		t, d, err := sc.verifySegment(body)
+		t, d, err := sc.decodeSegment(body)
 		if err != nil {
-			sc.logger.Error().Err(err).Msg("Parse segment")
+			sc.logger.Error().Err(err).Msg("Decode media segment")
 		} else {
 			sc.logger.Trace().Msgf("T:%s D:%s", t, d)
 			if fetchme.T != 0 || fetchme.D != 0 {
@@ -272,7 +272,8 @@ func (sc *StreamChecker) executeFetchAndStore(fetchme SegmentInfo) error {
 	return nil
 }
 
-func (sc *StreamChecker) verifySegment(buf []byte) (offset, duration time.Duration, err error) {
+// decodeSegment will decode the buffer as a mp4, extract the pts and duration metadata and return them
+func (sc *StreamChecker) decodeSegment(buf []byte) (offset, duration time.Duration, err error) {
 	buffer := bytes.NewReader(buf)
 	parsedMp4, lerr := mp4.DecodeFile(buffer, mp4.WithDecodeMode(mp4.DecModeLazyMdat))
 	if lerr != nil {
