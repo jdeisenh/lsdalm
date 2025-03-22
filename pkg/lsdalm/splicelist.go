@@ -7,6 +7,7 @@ import (
 type SpliceList []time.Time
 
 // AddIfNew adds an element to the splicelist, if not already there
+// Todo: Enforce they are sorted
 func (sl *SpliceList) AddIfNew(newone time.Time) bool {
 	for _, e := range *sl {
 		if e == newone {

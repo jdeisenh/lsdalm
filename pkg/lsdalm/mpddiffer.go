@@ -36,6 +36,7 @@ func (mpdiffer *MpdDiffer) AddOnNewPeriod(event func(period *mpd.Period)) {
 	mpdiffer.onNewPeriod = append(mpdiffer.onNewPeriod, event)
 }
 
+// Check pointer types for equality. nil pointers are only equal to nil pointers
 func Equal[C xsd.DateTime | xsd.Duration | string](a, b *C) bool {
 	if a == nil && b == nil {
 		return true
@@ -46,6 +47,7 @@ func Equal[C xsd.DateTime | xsd.Duration | string](a, b *C) bool {
 	return *a == *b
 }
 
+// AdaptationSetById finds id in the list of Adaptationsets
 func AdaptationSetById(set []*mpd.AdaptationSet, id *string) *mpd.AdaptationSet {
 	for _, p := range set {
 		if Equal(p.Id, id) {
@@ -55,6 +57,7 @@ func AdaptationSetById(set []*mpd.AdaptationSet, id *string) *mpd.AdaptationSet 
 	return nil
 }
 
+// PeriodId finds id in the list of Periods
 func PeriodById(set []*mpd.Period, id *string) *mpd.Period {
 	for _, p := range set {
 		if Equal(p.ID, id) {
@@ -64,6 +67,7 @@ func PeriodById(set []*mpd.Period, id *string) *mpd.Period {
 	return nil
 }
 
+// RepresentationById finds id in the list of Representations
 func RepresentationById(set []mpd.Representation, id *string) *mpd.Representation {
 	for _, p := range set {
 		if Equal(p.ID, id) {
@@ -105,7 +109,7 @@ func (md *MpdDiffer) AddSegmentTemplate(cur *mpd.SegmentTemplate, start time.Tim
 
 	cf, ct := sumSegmentTemplate(cur, start)
 
-	md.logger.Info().Msgf("%s: Dropped %s Added %s", id, "    ", Round(ct.Sub(cf)))
+	md.logger.Debug().Msgf("%s: Dropped %s Added %s", id, "    ", Round(ct.Sub(cf)))
 	return nil
 }
 func (md *MpdDiffer) DiffSegmentTemplate(old, cur *mpd.SegmentTemplate, start time.Time, id string) error {
@@ -126,7 +130,7 @@ func (md *MpdDiffer) DiffSegmentTemplate(old, cur *mpd.SegmentTemplate, start ti
 	cf, ct := sumSegmentTemplate(cur, start)
 
 	if cf != of || ot != ct {
-		md.logger.Info().Msgf("%s: Dropped %8s Added %8s", id, Round(cf.Sub(of)), Round(ct.Sub(ot)))
+		md.logger.Debug().Msgf("%s: Dropped %8s Added %8s", id, Round(cf.Sub(of)), Round(ct.Sub(ot)))
 	}
 
 	return nil
@@ -134,7 +138,7 @@ func (md *MpdDiffer) DiffSegmentTemplate(old, cur *mpd.SegmentTemplate, start ti
 
 func (md *MpdDiffer) AddAdaptationSet(cur *mpd.AdaptationSet, periodStart time.Time) error {
 	for _, newr := range cur.Representations {
-		md.logger.Warn().Msgf("New Representation %s", EmptyIfNil(newr.ID))
+		md.logger.Debug().Msgf("New Representation %s", EmptyIfNil(newr.ID))
 	}
 	id := fmt.Sprintf("AS%2s:%15s:%-15s", EmptyIfNil(cur.Id), cur.MimeType, EmptyIfNil(cur.Codecs))
 	md.AddSegmentTemplate(cur.SegmentTemplate, periodStart, id)
@@ -152,7 +156,7 @@ func (md *MpdDiffer) DiffAdaptationSet(old, cur *mpd.AdaptationSet, periodStart 
 	}
 	for _, newr := range cur.Representations {
 		if oldr := RepresentationById(old.Representations, newr.ID); oldr == nil {
-			md.logger.Warn().Msgf("New Representation %s", EmptyIfNil(newr.ID))
+			md.logger.Debug().Msgf("New Representation %s", EmptyIfNil(newr.ID))
 		}
 	}
 	id := fmt.Sprintf("AS%2s:%15s:%-15s", EmptyIfNil(cur.Id), cur.MimeType, EmptyIfNil(cur.Codecs))
@@ -173,7 +177,7 @@ func PeriodStart(period *mpd.Period) (start time.Duration) {
 func (md *MpdDiffer) AddPeriod(cur *mpd.Period) error {
 	periodStart := md.ast.Add(PeriodStart(cur))
 	for _, newa := range cur.AdaptationSets {
-		md.logger.Warn().Msgf("New AdaptationSet %s", EmptyIfNil(newa.Id))
+		md.logger.Debug().Msgf("New AdaptationSet %s", EmptyIfNil(newa.Id))
 		md.AddAdaptationSet(newa, periodStart)
 	}
 	for _, cures := range cur.EventStream {
@@ -216,7 +220,7 @@ func (md *MpdDiffer) DiffPeriod(old, cur *mpd.Period) error {
 	}
 	for _, newa := range cur.AdaptationSets {
 		if olda := AdaptationSetById(old.AdaptationSets, newa.Id); olda == nil {
-			md.logger.Warn().Msgf("New AdaptationSet %s", EmptyIfNil(newa.Id))
+			md.logger.Debug().Msgf("New AdaptationSet %s", EmptyIfNil(newa.Id))
 		}
 	}
 
@@ -228,7 +232,7 @@ func (md *MpdDiffer) DiffPeriod(old, cur *mpd.Period) error {
 				//md.DiffEvent(olda, cura, periodStart)
 				//md.logger.Info().Msgf("Found %s:%d", *oldes.SchemeIdUri, oldee.Id)
 			} else {
-				md.logger.Info().Msgf("Event %s:%d gone", EmptyIfNil(oldes.SchemeIdUri), oldee.Id)
+				md.logger.Debug().Msgf("Event %s:%d gone", EmptyIfNil(oldes.SchemeIdUri), oldee.Id)
 			}
 		}
 	}
@@ -249,6 +253,8 @@ func (md *MpdDiffer) DiffPeriod(old, cur *mpd.Period) error {
 	return nil
 }
 
+// Update is fed a new mpd for comparison to the previous one
+// As a result, an error may be returned, and callbacks maybe called
 func (md *MpdDiffer) Update(mpde *mpd.MPD) error {
 	old := md.lastMpd
 	cur := mpde
