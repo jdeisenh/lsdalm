@@ -91,10 +91,7 @@ func (sc *StreamLooper) BuildMpd(ptsShift time.Duration, id string, periodStart,
 	np := new(mpd.Period)
 	*np = *period
 
-	var ast time.Time
-	if mpde.AvailabilityStartTime != nil {
-		ast = time.Time(*mpde.AvailabilityStartTime)
-	}
+	ast := GetAst(mpde)
 
 	// Calculate period start
 	var effectivePtsShift time.Duration
@@ -250,7 +247,7 @@ func (sc *StreamLooper) GetStatic() ([]byte, error) {
 	start, end := sc.recording.getTimelineRange()
 	//start, end = sc.recording.getRecordingRange()
 	duration := end.Sub(start)
-	ast := time.Time(*sc.recording.originalMpd.AvailabilityStartTime)
+	ast := GetAst(sc.recording.originalMpd)
 	sc.logger.Debug().Msgf("Start %s End %s Duration %s Shift %s",
 		shortT(start), shortT(end), RoundToS(duration), start.Sub(ast))
 

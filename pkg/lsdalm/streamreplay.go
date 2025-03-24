@@ -266,10 +266,7 @@ func (sc *StreamReplay) getPtsRange(mpde *mpd.MPD, mimetype string) (time.Time, 
 	if len(mpde.Period) == 0 {
 		return time.Time{}, time.Time{}, errors.New("No periods")
 	}
-	var ast time.Time
-	if mpde.AvailabilityStartTime != nil {
-		ast = time.Time(*mpde.AvailabilityStartTime)
-	}
+	ast := GetAst(mpde)
 
 	var earliest, latest time.Time
 

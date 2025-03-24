@@ -324,3 +324,24 @@ func baseToPath(base, prefix string) string {
 		return path.Join(prefix, baseurl.Path)
 	}
 }
+
+// Returns a Period with mannipulated start and overwrite ID
+func PeriodWithStart(in *mpd.Period, start time.Duration, id string) *mpd.Period {
+	p := new(mpd.Period)
+	*p = *in
+	newStart := DurationToXsdDuration(start)
+	p.Start = &newStart
+	if id != "" {
+		newid := id
+		p.ID = &newid
+	}
+	return p
+}
+
+func GetAst(in *mpd.MPD) time.Time {
+	var ast time.Time
+	if in != nil && in.AvailabilityStartTime != nil {
+		ast = time.Time(*in.AvailabilityStartTime)
+	}
+	return ast
+}

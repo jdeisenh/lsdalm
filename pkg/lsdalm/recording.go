@@ -3,11 +3,12 @@ package lsdalm
 import (
 	"errors"
 	"fmt"
-	"github.com/jdeisenh/lsdalm/pkg/go-mpd"
-	"github.com/rs/zerolog"
 	"os"
 	"path"
 	"time"
+
+	"github.com/jdeisenh/lsdalm/pkg/go-mpd"
+	"github.com/rs/zerolog"
 )
 
 type Recording struct {
@@ -211,10 +212,7 @@ func (re *Recording) getTimelineRange() (from, to time.Time) {
 	if re.originalMpd == nil || len(re.originalMpd.Period) == 0 {
 		return
 	}
-	var ast time.Time
-	if re.originalMpd.AvailabilityStartTime != nil {
-		ast = time.Time(*re.originalMpd.AvailabilityStartTime)
-	}
+	ast := GetAst(re.originalMpd)
 	// First period only
 	period := re.originalMpd.Period[0]
 	for asi, as := range period.AdaptationSets {

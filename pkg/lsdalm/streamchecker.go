@@ -23,7 +23,7 @@ const (
 	ManifestPath     = "manifests"                         // subdirectory name for manifests
 	ManifestFormat   = "manifest-2006-01-02T15:04:05Z.mpd" // time format for filenames
 	FetchQueueSize   = 5000                                // Max number of outstanding requests in queue
-	maxGapLog        = 5 * time.Millisecond                // Warn above this gap length
+	maxGapLog        = 60 * time.Millisecond               // Warn above this gap length
 	dateShortFmt     = "15:04:05.00"                       // Used in logging dates
 	SchemeScteXml    = "urn:scte:scte35:2014:xml+bin"      // The one scte scheme we support right now
 	DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
@@ -452,10 +452,7 @@ func (sc *StreamChecker) walkMpd(mpde *mpd.MPD) error {
 	if len(mpde.Period) == 0 {
 		return errors.New("No periods")
 	}
-	var ast time.Time
-	if mpde.AvailabilityStartTime != nil {
-		ast = time.Time(*mpde.AvailabilityStartTime)
-	}
+	ast := GetAst(mpde)
 	// Log events
 	for _, period := range mpde.Period {
 		periodStart := ast.Add(PeriodStart(period))
@@ -572,7 +569,7 @@ ASloop:
 					msg += fmt.Sprintf("GAP: %s", Round(gap))
 				}
 
-				msg += fmt.Sprintf(" [%s-(%7s)-%s[", from.Format(dateShortFmt), Round(to.Sub(from)), to.Format(dateShortFmt))
+				msg += fmt.Sprintf(" %s(%7s)%s", "" /*from.Format(dateShortFmt)*/, Round(to.Sub(from)), "" /*to.Format(dateShortFmt)*/)
 
 				if periodIdx == len(mpde.Period)-1 {
 					msg += fmt.Sprintf(" %.1fs", float64(now.Sub(to)/(time.Second/10))/10.0) // Live edge distance
