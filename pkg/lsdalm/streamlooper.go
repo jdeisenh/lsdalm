@@ -74,8 +74,7 @@ func NewStreamLooper(dumpdir string, logger zerolog.Logger) (*StreamLooper, erro
 // from, to: Segments to include (in shifted absolute time)
 func (sc *StreamLooper) BuildMpd(ptsShift time.Duration, id string, periodStart, from, to time.Time) *mpd.MPD {
 	mpde := sc.recording.originalMpd
-	outMpd := new(mpd.MPD)
-	*outMpd = *mpde // Copy mpd
+	outMpd := Copy(mpde)
 
 	period := mpde.Period[0] // There is only one
 
@@ -88,8 +87,7 @@ func (sc *StreamLooper) BuildMpd(ptsShift time.Duration, id string, periodStart,
 	}
 
 	// Copy period
-	np := new(mpd.Period)
-	*np = *period
+	np := Copy(period)
 
 	ast := GetAst(mpde)
 
@@ -114,14 +112,12 @@ func (sc *StreamLooper) BuildMpd(ptsShift time.Duration, id string, periodStart,
 		if as.SegmentTemplate == nil || as.SegmentTemplate.SegmentTimeline == nil {
 			continue
 		}
-		nas := new(mpd.AdaptationSet)
-		*nas = *as
-		nst := new(mpd.SegmentTemplate)
-		nas.SegmentTemplate = nst
-		*nst = *as.SegmentTemplate
-		nstl := new(mpd.SegmentTimeline)
-		nst.SegmentTimeline = nstl
-		*nstl = *nst.SegmentTimeline
+		nas := Copy(as)
+		nas.SegmentTemplate = Copy(as.SegmentTemplate)
+		nas.SegmentTemplate.SegmentTimeline = Copy(as.SegmentTemplate.SegmentTimeline)
+
+		nst := nas.SegmentTemplate
+		nstl := nas.SegmentTemplate.SegmentTimeline
 
 		nstl.S = nstl.S[:0]
 		elements := sc.recording.Segments[asi]
@@ -157,8 +153,7 @@ func (sc *StreamLooper) BuildMpd(ptsShift time.Duration, id string, periodStart,
 	np.EventStream = np.EventStream[:0]
 	for _, ev := range sc.recording.EventStreamMap {
 		// Append all for all ranges: Todo: map offset, duration
-		evs := new(mpd.EventStream)
-		*evs = *ev
+		evs := Copy(ev)
 		pto := uint64(ZeroIfNil(ev.PresentationTimeOffset))
 		timescale := ZeroIfNil(ev.Timescale)
 		pto = uint64(int64(pto) + Duration2TLP(effectivePtsShift, timescale))

@@ -345,3 +345,13 @@ func GetAst(in *mpd.MPD) time.Time {
 	}
 	return ast
 }
+
+// Copy is a generic that returns a shallow copy of the original element
+func Copy[T mpd.MPD | mpd.Period | mpd.AdaptationSet | mpd.SegmentTemplate | mpd.SegmentTimeline | mpd.EventStream](org *T) *T {
+	if org == nil {
+		return nil
+	}
+	r := new(T)
+	*r = *org
+	return r
+}
