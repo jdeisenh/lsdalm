@@ -114,12 +114,11 @@ func (sc *StreamLooper) BuildMpd(ptsShift time.Duration, id string, periodStart,
 		}
 		nas := Copy(as)
 		nas.SegmentTemplate = Copy(as.SegmentTemplate)
-		nas.SegmentTemplate.SegmentTimeline = Copy(as.SegmentTemplate.SegmentTimeline)
+		nas.SegmentTemplate.SegmentTimeline = new(mpd.SegmentTimeline)
 
 		nst := nas.SegmentTemplate
 		nstl := nas.SegmentTemplate.SegmentTimeline
 
-		nstl.S = nstl.S[:0]
 		elements := sc.recording.Segments[asi]
 		ShiftPto(nst, effectivePtsShift)
 		start := elements.start
