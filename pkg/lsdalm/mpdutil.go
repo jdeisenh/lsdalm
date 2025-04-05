@@ -338,6 +338,8 @@ func PeriodWithStart(in *mpd.Period, start time.Duration, id string) *mpd.Period
 	return p
 }
 
+// GetAst finds the AvailabilityStartTime in an MPD
+// Returns empty time if not found
 func GetAst(in *mpd.MPD) time.Time {
 	var ast time.Time
 	if in != nil && in.AvailabilityStartTime != nil {
@@ -354,4 +356,20 @@ func Copy[T mpd.MPD | mpd.Period | mpd.AdaptationSet | mpd.SegmentTemplate | mpd
 	r := new(T)
 	*r = *org
 	return r
+}
+
+// ZeroIfNil is a short hand to evaluate a *uint64
+func ZeroIfNil[T int64 | uint64](in *T) T {
+	if in == nil {
+		return 0
+	}
+	return *in
+}
+
+// EmptyIfNil is a short hand to evaluate a string pointer
+func EmptyIfNil(in *string) string {
+	if in == nil {
+		return ""
+	}
+	return *in
 }

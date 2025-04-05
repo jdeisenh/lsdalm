@@ -22,7 +22,7 @@ import (
 const (
 	ManifestPath     = "manifests"                         // subdirectory name for manifests
 	ManifestFormat   = "manifest-2006-01-02T15:04:05Z.mpd" // time format for filenames
-	FetchQueueSize   = 5000                                // Max number of outstanding requests in queue
+	FetchQueueSize   = 50000                               // Max number of outstanding requests in queue
 	maxGapLog        = 60 * time.Millisecond               // Warn above this gap length
 	dateShortFmt     = "15:04:05.00"                       // Used in logging dates
 	SchemeScteXml    = "urn:scte:scte35:2014:xml+bin"      // The one scte scheme we support right now
@@ -412,6 +412,8 @@ func (sc *StreamChecker) fetchAndStoreManifest() error {
 
 }
 
+// OnNewMpd is called when a new MPD is published
+// (that is different)
 func (sc *StreamChecker) OnNewMpd(mpde *mpd.MPD) error {
 
 	if err := sc.mpdDiffer.Update(mpde); err != nil {
@@ -425,22 +427,6 @@ func (sc *StreamChecker) OnNewMpd(mpde *mpd.MPD) error {
 		err = onAllSegmentUrls(mpde, sc.sourceUrl, sc.fetchAndStoreSegment)
 	}
 	return err
-}
-
-// ZeroIfNil is a short hand to evaluate a *uint64
-func ZeroIfNil[T int64 | uint64](in *T) T {
-	if in == nil {
-		return 0
-	}
-	return *in
-}
-
-// EmptyIfNil is a short hand to evaluate a string pointer
-func EmptyIfNil(in *string) string {
-	if in == nil {
-		return ""
-	}
-	return *in
 }
 
 // Iterate through all periods, representation, segmentTimeline and
