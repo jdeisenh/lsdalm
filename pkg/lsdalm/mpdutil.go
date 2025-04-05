@@ -206,7 +206,11 @@ func ShiftPto(st *mpd.SegmentTemplate, shiftValue time.Duration) {
 	ptn := uint64(int64(pto) + Duration2TLP(shiftValue, timescale))
 	//log.Debug().Msgf("PTO %d shift %s %d  new %d",pto,shiftValue,Duration2TLP(shiftValue, timescale),ptn)
 	// Write back
-	st.PresentationTimeOffset = &ptn
+	if ptn == 0 {
+		st.PresentationTimeOffset = nil
+	} else {
+		st.PresentationTimeOffset = &ptn
+	}
 }
 
 // Iterate through all periods, representation, segmentTimeline and
@@ -372,4 +376,36 @@ func EmptyIfNil(in *string) string {
 		return ""
 	}
 	return *in
+}
+
+// ExactDuration finds the shortes Track by summing the samples for all Representations
+func ExactDuration(m *mpd.MPD) time.Duration {
+
+	dur := time.Hour * 10000 // Upper limit
+	if m == nil {
+		return 0
+	}
+	ast := GetAst(m)
+	for _, p := range m.Period {
+		for _, as := range p.AdaptationSets {
+			if as.SegmentTemplate != nil {
+				from, to := SumSegmentTemplate(as.SegmentTemplate, ast.Add(PeriodStart(p)))
+				du := to.Sub(from)
+				if du < dur {
+					dur = du
+				}
+			} else {
+				for _, rep := range as.Representations {
+					if rep.SegmentTemplate != nil {
+						from, to := SumSegmentTemplate(rep.SegmentTemplate, ast.Add(PeriodStart(p)))
+						du := to.Sub(from)
+						if du < dur {
+							dur = du
+						}
+					}
+				}
+			}
+		}
+	}
+	return dur
 }
