@@ -211,6 +211,20 @@ func ShiftPto(st *mpd.SegmentTemplate, shiftValue time.Duration) {
 	} else {
 		st.PresentationTimeOffset = &ptn
 	}
+	startNumber := ZeroIfNil(st.StartNumber)
+	duration := ZeroIfNil(st.Duration)
+	if duration == 0 {
+		return
+	}
+	//Number increase with every segment, that is duration/timescale
+	stn := uint64(int64(startNumber) + Duration2TLP(shiftValue, timescale)/int64(duration))
+
+	if stn == 0 {
+		st.StartNumber = nil
+	} else {
+		st.StartNumber = &stn
+	}
+
 }
 
 // Iterate through all periods, representation, segmentTimeline and
