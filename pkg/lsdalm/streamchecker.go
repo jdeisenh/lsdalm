@@ -23,7 +23,7 @@ const (
 	ManifestPath     = "manifests"                         // subdirectory name for manifests
 	ManifestFormat   = "manifest-2006-01-02T15:04:05Z.mpd" // time format for filenames
 	FetchQueueSize   = 50000                               // Max number of outstanding requests in queue
-	maxGapLog        = 60 * time.Millisecond               // Warn above this gap length
+	maxGapLog        = 100 * time.Millisecond              // Warn above this gap length
 	dateShortFmt     = "15:04:05.00"                       // Used in logging dates
 	SchemeScteXml    = "urn:scte:scte35:2014:xml+bin"      // The one scte scheme we support right now
 	DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
@@ -424,7 +424,7 @@ func (sc *StreamChecker) OnNewMpd(mpde *mpd.MPD) error {
 	}
 	var err error
 	if sc.fetchMode > MODE_NOFETCH {
-		err = onAllSegmentUrls(mpde, sc.sourceUrl, sc.fetchAndStoreSegment)
+		err = OnAllSegmentUrls(mpde, sc.sourceUrl, sc.fetchAndStoreSegment)
 	}
 	return err
 }
@@ -531,7 +531,7 @@ ASloop:
 				}
 				for _, sp := range sc.upcomingSplices.InRange(from, to) {
 					//sc.logger.Info().Msgf("Found splice at %s", shortT(sp))
-					walkSegmentTemplateTimings(segTemp, periodStart, func(t time.Time, d time.Duration) {
+					WalkSegmentTemplateTimings(segTemp, periodStart, func(t time.Time, d time.Duration) {
 						if !sp.At.Before(t) && sp.At.Before(t.Add(d)) {
 							offset := sp.At.Sub(t)
 							if offset > d/2 {

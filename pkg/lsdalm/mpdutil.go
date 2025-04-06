@@ -81,7 +81,7 @@ func Append(st *mpd.SegmentTimeline, t, d uint64, r int64) {
 }
 
 // walkSegmentTemplate walks a segmentTemplate and calls 'action' on all media Segments with their full URL
-func walkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId string, action func(*url.URL, time.Duration, time.Duration) error) error {
+func WalkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId string, action func(*url.URL, time.Duration, time.Duration) error) error {
 
 	pathTemplate := NewPathReplacer(*st.Media)
 	if st.Initialization != nil {
@@ -138,7 +138,7 @@ func SumSegmentTemplate(st *mpd.SegmentTemplate, periodStart time.Time) (from, t
 }
 
 // walkegmentTemplate walks the template and calls action
-func walkSegmentTemplateTimings(st *mpd.SegmentTemplate, periodStart time.Time, action func(time.Time, time.Duration)) {
+func WalkSegmentTemplateTimings(st *mpd.SegmentTemplate, periodStart time.Time, action func(time.Time, time.Duration)) {
 
 	if st == nil {
 		return
@@ -215,7 +215,7 @@ func ShiftPto(st *mpd.SegmentTemplate, shiftValue time.Duration) {
 
 // Iterate through all periods, representation, segmentTimeline and
 // call 'action' with the URL
-func onAllSegmentUrls(mpd *mpd.MPD, mpdUrl *url.URL, action func(*url.URL, time.Duration, time.Duration) error) error {
+func OnAllSegmentUrls(mpd *mpd.MPD, mpdUrl *url.URL, action func(*url.URL, time.Duration, time.Duration) error) error {
 	// Walk all Periods, AdaptationSets and Representations
 	for _, period := range mpd.Period {
 		segmentPath := segmentPathFromPeriod(period, mpdUrl)
@@ -226,11 +226,11 @@ func onAllSegmentUrls(mpd *mpd.MPD, mpdUrl *url.URL, action func(*url.URL, time.
 				}
 				repId := *pres.ID
 				if as.SegmentTemplate != nil {
-					if err := walkSegmentTemplate(as.SegmentTemplate, segmentPath, repId, action); err != nil {
+					if err := WalkSegmentTemplate(as.SegmentTemplate, segmentPath, repId, action); err != nil {
 						break
 					}
 				} else if pres.SegmentTemplate != nil {
-					if err := walkSegmentTemplate(pres.SegmentTemplate, segmentPath, repId, action); err != nil {
+					if err := WalkSegmentTemplate(pres.SegmentTemplate, segmentPath, repId, action); err != nil {
 						break
 					}
 				}
@@ -309,7 +309,7 @@ func ConcatURL(a *url.URL, br string) *url.URL {
 }
 
 // baseToPath converts a Base URL to a absolute local path
-func baseToPath(base, prefix string) string {
+func BaseToPath(base, prefix string) string {
 	if prefix == "" {
 		// No change
 		return base
@@ -353,7 +353,7 @@ func GetAst(in *mpd.MPD) time.Time {
 }
 
 // Copy is a generic that returns a shallow copy of the original element
-func Copy[T mpd.MPD | mpd.Period | mpd.AdaptationSet | mpd.SegmentTemplate | mpd.SegmentTimeline | mpd.EventStream](org *T) *T {
+func Copy[T mpd.MPD | mpd.Period | mpd.AdaptationSet | mpd.SegmentTemplate | mpd.SegmentTimeline | mpd.EventStream | mpd.Event](org *T) *T {
 	if org == nil {
 		return nil
 	}
