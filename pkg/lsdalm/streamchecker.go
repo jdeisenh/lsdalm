@@ -201,7 +201,7 @@ func (sc *StreamChecker) fetchAndStoreSegmentS(fetchthis SegmentInfo) error {
 		return nil
 	default:
 		// That happens in batches, should probably be rate limited
-		sc.logger.Error().Msg("Queue full")
+		//sc.logger.Error().Msg("Queue full")
 		return errors.New("Queue full")
 	}
 }
@@ -422,9 +422,16 @@ func (sc *StreamChecker) OnNewMpd(mpde *mpd.MPD) error {
 	if err := sc.walkMpd(mpde); err != nil {
 		return err
 	}
+	ast := GetAst(mpde)
 	var err error
 	if sc.fetchMode > MODE_NOFETCH {
-		err = OnAllSegmentUrls(mpde, sc.sourceUrl, sc.fetchAndStoreSegment)
+		err = OnAllSegmentUrls(mpde, sc.sourceUrl, func(url *url.URL, t, d time.Duration) error {
+			if time.Since(ast.Add(t)) > 5*time.Minute {
+				// Skip too old segments
+				return nil
+			}
+			return sc.fetchAndStoreSegment(url, t, d)
+		})
 	}
 	return err
 }
@@ -547,7 +554,7 @@ ASloop:
 				if periodIdx == 0 {
 					// Line start: mimetype+codec, timeshiftBufferDepth
 					codecs := ""
-					if as.Codecs != nil {
+					if asRef.Codecs != nil {
 						codecs = "/" + *asRef.Codecs
 					}
 					msg = fmt.Sprintf("%30s: %8s", asRef.MimeType+codecs, RoundTo(now.Sub(from), time.Second))
