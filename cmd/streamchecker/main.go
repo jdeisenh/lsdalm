@@ -84,5 +84,6 @@ func main() {
 	} else {
 		go sg.Do()
 		time.Sleep(*timeLimit)
+		sg.Done()
 	}
 }
