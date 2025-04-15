@@ -78,9 +78,9 @@ type Period struct {
 	Start          *xsd.Duration    `xml:"start,attr"`
 	ID             *string          `xml:"id,attr"`
 	Duration       *xsd.Duration    `xml:"duration,attr"`
+	BaseURL        []*BaseURL       `xml:"BaseURL,omitempty"`
 	EventStream    []*EventStream   `xml:"EventStream,omitempty"`
 	AdaptationSets []*AdaptationSet `xml:"AdaptationSet,omitempty"`
-	BaseURL        []*BaseURL       `xml:"BaseURL,omitempty"`
 }
 
 // BaseURL represents XSD's BaseURLType.
