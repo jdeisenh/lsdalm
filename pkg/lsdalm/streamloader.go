@@ -44,7 +44,9 @@ func NewStreamLoader(name, source string, updateFreq time.Duration, logger zerol
 		logger:     logger.With().Str("channel", name).Logger(),
 		done:       make(chan struct{}),
 		client: &http.Client{
-			Transport: &http.Transport{},
+			Transport: &http.Transport{
+				MaxIdleConnsPerHost: 10000,
+			},
 		},
 		userAgent: DefaultUserAgent,
 		sessions:  make([]*Session, 0, sessions),
@@ -138,15 +140,17 @@ func (sc *StreamLoader) fetchManifest(ses *Session) error {
 
 	sc.lastDate = resp.Header.Get("Date")
 
-	mpd := new(mpd.MPD)
-	err = mpd.Decode(contents)
-	if err != nil {
-		sc.logger.Error().Err(err).Msgf("Parse Manifest size %d", len(contents))
-		sc.logger.Debug().Msg(string(contents))
-		return err
-	}
+	/*
+		mpd := new(mpd.MPD)
+		err = mpd.Decode(contents)
+		if err != nil {
+			sc.logger.Error().Err(err).Msgf("Parse Manifest size %d", len(contents))
+			sc.logger.Debug().Msg(string(contents))
+			return err
+		}
 
-	err = sc.OnNewMpd(ses, mpd)
+		err = sc.OnNewMpd(ses, mpd)
+	*/
 	return err
 
 }
