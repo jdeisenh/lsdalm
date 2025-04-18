@@ -558,11 +558,11 @@ ASloop:
 						codecs = "/" + *asRef.Codecs
 					}
 					msg = fmt.Sprintf("%30s: %8s", asRef.MimeType+codecs, RoundTo(now.Sub(from), time.Second))
-				} else if gap := from.Sub(theGap); gap > maxGapLog || gap < -maxGapLog {
+				} else if gap := from.Sub(theGap); gap > maxGapLog {
 					msg += fmt.Sprintf("GAP: %s", Round(gap))
 				}
 
-				msg += fmt.Sprintf(" %s(%7s)%s", "" /*from.Format(dateShortFmt)*/, Round(to.Sub(from)), "" /*to.Format(dateShortFmt)*/)
+				msg += fmt.Sprintf(" %s(%8s)%s", "" /*from.Format(dateShortFmt)*/, Round(to.Sub(from)), "" /*to.Format(dateShortFmt)*/)
 
 				if periodIdx == len(mpde.Period)-1 {
 					msg += fmt.Sprintf(" %.1fs", float64(now.Sub(to)/(time.Second/10))/10.0) // Live edge distance
