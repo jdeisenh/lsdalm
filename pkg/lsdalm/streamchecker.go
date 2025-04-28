@@ -27,6 +27,7 @@ const (
 	dateShortFmt     = "15:04:05.00"                       // Used in logging dates
 	SchemeScteXml    = "urn:scte:scte35:2014:xml+bin"      // The one scte scheme we support right now
 	DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+	maxTimeDiff      = time.Millisecond // What segmment duration/offset we tolerate before warning (due to rounding errors)
 )
 
 // Modes support for checking media segments
@@ -263,7 +264,11 @@ func (sc *StreamChecker) executeFetchAndStore(fetchme SegmentInfo) error {
 		} else {
 			sc.logger.Trace().Msgf("T:%s D:%s", t, d)
 			if fetchme.T != 0 || fetchme.D != 0 {
-				if t != fetchme.T || d != fetchme.D {
+				diffT := fetchme.T - t
+				diffD := fetchme.D - d
+				absDiffT := max(diffT, -diffT)
+				absDiffD := max(diffD, -diffD)
+				if absDiffD < maxTimeDiff || absDiffT < maxTimeDiff {
 					sc.logger.Error().Str("url", fetchme.Url.String()).Msg("Mediasegment Offset/Duration Mismatch")
 					sc.logger.Error().Str("D", fetchme.D.String()).Str("T", fetchme.T.String()).Msg("Manifest")
 					sc.logger.Error().Str("D", d.String()).Str("T", t.String()).Msg("Segment")
