@@ -290,6 +290,7 @@ func (sc *StreamChecker) decodeSegment(buf []byte) (offset, duration time.Durati
 		err = fmt.Errorf("could not parse input file: %w", err)
 		return
 	}
+	var timescale uint32
 	for _, box := range parsedMp4.Children {
 		switch box.Type() {
 		case "sidx":
@@ -299,11 +300,26 @@ func (sc *StreamChecker) decodeSegment(buf []byte) (offset, duration time.Durati
 			for _, m := range sidx.SidxRefs {
 				ssd += m.SubSegmentDuration
 			}
+			timescale = sidx.Timescale
 			// Convert to duration. Looks complicated, tries to avoid rounding and overflow
 			offset = time.Duration(sidx.EarliestPresentationTime/uint64(sidx.Timescale))*time.Second +
 				time.Duration(sidx.EarliestPresentationTime%uint64(sidx.Timescale))*time.Second/time.Duration(sidx.Timescale)
 			duration = time.Duration(ssd/sidx.Timescale)*time.Second +
 				time.Duration(ssd%sidx.Timescale)*time.Second/time.Duration(sidx.Timescale)
+			//sc.logger.Info().Msgf("Start at: %s Duration %s", offset, duration)
+		case "moof":
+			moof := box.(*mp4.MoofBox)
+			if moof == nil || moof.Traf == nil || moof.Traf.Tfdt == nil {
+				break
+			}
+			if timescale == 0 {
+				break
+			}
+			bmdt := moof.Traf.Tfdt.BaseMediaDecodeTime()
+			if offset == 0 {
+				offset = time.Duration(bmdt/uint64(timescale))*time.Second +
+					time.Duration(bmdt%uint64(timescale))*time.Second/time.Duration(timescale)
+			}
 			//sc.logger.Info().Msgf("Start at: %s Duration %s", offset, duration)
 
 		default:
