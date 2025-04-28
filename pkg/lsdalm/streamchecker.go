@@ -268,7 +268,8 @@ func (sc *StreamChecker) executeFetchAndStore(fetchme SegmentInfo) error {
 				diffD := fetchme.D - d
 				absDiffT := max(diffT, -diffT)
 				absDiffD := max(diffD, -diffD)
-				if absDiffD < maxTimeDiff || absDiffT < maxTimeDiff {
+				if absDiffD > maxTimeDiff || absDiffT > maxTimeDiff {
+					sc.logger.Error().Str("url", fetchme.Url.String()).Msgf("Abs diff: %s", absDiffT)
 					sc.logger.Error().Str("url", fetchme.Url.String()).Msg("Mediasegment Offset/Duration Mismatch")
 					sc.logger.Error().Str("D", fetchme.D.String()).Str("T", fetchme.T.String()).Msg("Manifest")
 					sc.logger.Error().Str("D", d.String()).Str("T", t.String()).Msg("Segment")
