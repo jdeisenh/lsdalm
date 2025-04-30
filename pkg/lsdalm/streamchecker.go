@@ -48,29 +48,24 @@ type SegmentInfo struct {
 }
 
 type StreamChecker struct {
-	name        string           // Name, display only
-	sourceUrl   *url.URL         // Manifest source URL
-	dumpdir     string           // Directory we write manifests and segments
-	manifestDir string           // Subdirectory of above for manifests
-	userAgent   string           // Agent used in outgoing http
-	updateFreq  time.Duration    // Update freq for manifests
-	fetchqueue  chan SegmentInfo // Buffered chan for async media segment requests
-	done        chan struct{}    // Chan to stop background goroutines
-	ticker      *time.Ticker     // Ticker for timing manifest requests
-	fetchMode   FetchMode        // Media segment fetch mode: one of MODE_
-
-	logger zerolog.Logger // Logger instance
-	client *http.Client
-
-	haveMap   map[string]bool // Map of requests in queue (to avoid adding them several times)
-	haveMutex sync.Mutex      // Mutex protecting the haveMap
-
-	onFetch []func(string, time.Time) // Callbacks to be execute on manifest storage
-
-	// State
-	initialPeriod   *mpd.Period // The first period ever fetched, stream format of initial period
-	upcomingSplices SpliceList  // SCTE-Markers announced
-	lastDate        string
+	name            string                    // Name, display only
+	sourceUrl       *url.URL                  // Manifest source URL
+	dumpdir         string                    // Directory we write manifests and segments
+	manifestDir     string                    // Subdirectory of above for manifests
+	userAgent       string                    // Agent used in outgoing http
+	updateFreq      time.Duration             // Update freq for manifests
+	fetchqueue      chan SegmentInfo          // Buffered chan for async media segment requests
+	done            chan struct{}             // Chan to stop background goroutines
+	ticker          *time.Ticker              // Ticker for timing manifest requests
+	fetchMode       FetchMode                 // Media segment fetch mode: one of MODE_
+	logger          zerolog.Logger            // Logger instance
+	client          *http.Client              // Client to do http with
+	haveMap         map[string]bool           // Map of requests in queue (to avoid adding them several times)
+	haveMutex       sync.Mutex                // Mutex protecting the haveMap
+	onFetch         []func(string, time.Time) // Callbacks to be execute on manifest storage
+	initialPeriod   *mpd.Period               // The first period ever fetched, stream format of initial period
+	upcomingSplices SpliceList                // SCTE-Markers announced
+	lastDate        string                    // date of last http fetch (from header)
 
 	mpdDiffer *MpdDiffer
 }
@@ -269,10 +264,11 @@ func (sc *StreamChecker) executeFetchAndStore(fetchme SegmentInfo) error {
 				absDiffT := max(diffT, -diffT)
 				absDiffD := max(diffD, -diffD)
 				if absDiffD > maxTimeDiff || absDiffT > maxTimeDiff {
-					sc.logger.Error().Str("url", fetchme.Url.String()).Msgf("Abs diff: %s", absDiffT)
-					sc.logger.Error().Str("url", fetchme.Url.String()).Msg("Mediasegment Offset/Duration Mismatch")
-					sc.logger.Error().Str("D", fetchme.D.String()).Str("T", fetchme.T.String()).Msg("Manifest")
-					sc.logger.Error().Str("D", d.String()).Str("T", t.String()).Msg("Segment")
+					sc.logger.Error().Str("url", fetchme.Url.String()).
+						Str("MDur", fetchme.D.String()).
+						Str("SDur", d.String()).Str("T", t.String()).
+						Str("Offset", diffT.String()).
+						Msg("Mediasegment Offset/Duration Mismatch")
 				}
 			}
 		}
