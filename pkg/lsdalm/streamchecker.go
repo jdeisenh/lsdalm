@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -66,8 +67,7 @@ type StreamChecker struct {
 	initialPeriod   *mpd.Period               // The first period ever fetched, stream format of initial period
 	upcomingSplices SpliceList                // SCTE-Markers announced
 	lastDate        string                    // date of last http fetch (from header)
-
-	mpdDiffer *MpdDiffer
+	mpdDiffer       *MpdDiffer                // compare new to last mpd and trigger events
 }
 
 func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, fetchMode FetchMode, logger zerolog.Logger, workers int) (*StreamChecker, error) {
@@ -139,6 +139,7 @@ func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, f
 
 	st.mpdDiffer.AddOnNewPeriod(func(period *mpd.Period) {
 		logger.Info().Msgf("New Period %s starts %s", EmptyIfNil(period.ID), st.mpdDiffer.ast.Add(PeriodStart(period)))
+		st.checkTrackAlignment(period)
 	})
 
 	st.mpdDiffer.AddOnNewEvent(func(event *mpd.Event, scheme string, at time.Time, duration time.Duration) {
@@ -146,6 +147,27 @@ func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, f
 	})
 
 	return st, nil
+}
+
+func (sc *StreamChecker) checkTrackAlignment(period *mpd.Period) {
+	var oldOffset float64
+	for _, as := range period.AdaptationSets {
+		if as.SegmentTemplate == nil {
+			continue
+		}
+		pto := ZeroIfNil(as.SegmentTemplate.PresentationTimeOffset)
+		timescale := ZeroIfNil(as.SegmentTemplate.Timescale)
+		if timescale == 0 {
+			continue
+		}
+		offset := float64(pto) / float64(timescale)
+
+		if oldOffset != 0 && math.Abs(offset-oldOffset) > 0.001 {
+			sc.logger.Warn().Msgf("Offset difference of %g found in AS %s of period %s", offset-oldOffset, EmptyIfNil(as.Id), EmptyIfNil(period.ID))
+		}
+		oldOffset = offset
+	}
+
 }
 
 // GetDumpDir() returns the filesystem path where manifests and segments are stored
@@ -503,6 +525,9 @@ func (sc *StreamChecker) walkMpd(mpde *mpd.MPD) error {
 				break
 			}
 		}
+	}
+	if sc.initialPeriod == nil {
+		return fmt.Errorf("No initial period found")
 	}
 	// Walk all AdaptationSets, Periods, and Representations
 	// To have one AdaptationSet on one line for all Periods,
