@@ -466,7 +466,7 @@ func (sc *StreamChecker) OnNewMpd(mpde *mpd.MPD) error {
 	var err error
 	if sc.fetchMode > MODE_NOFETCH {
 		err = OnAllSegmentUrls(mpde, sc.sourceUrl, func(url *url.URL, t, d time.Duration) error {
-			if time.Since(ast.Add(t)) > 5*time.Minute {
+			if t != 0 && d != 0 && time.Since(ast.Add(t)) > 5*time.Minute {
 				// Skip too old segments
 				return nil
 			}
