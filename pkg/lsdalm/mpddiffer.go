@@ -218,7 +218,7 @@ func (md *MpdDiffer) DiffPeriod(old, cur *mpd.Period) (bool, error) {
 	// Todo: Check if start or duration changed
 	// Todo: Check BaseURL, EventStream
 	if PeriodStart(cur) != PeriodStart(old) {
-		md.logger.Error().Str("previous", PeriodStart(old).String()).Str("current", PeriodStart(cur).String()).Msgf("Period start changed")
+		md.logger.Error().Str("previd", EmptyIfNil(old.ID)).Str("previous", PeriodStart(old).String()).Str("curid", EmptyIfNil(cur.ID)).Str("current", PeriodStart(cur).String()).Msgf("Period start changed")
 		return true, fmt.Errorf("Period start changed")
 	}
 
