@@ -14,8 +14,8 @@ type MpdDiffer struct {
 	logger          zerolog.Logger // Logger instance
 	lastMpd         *mpd.MPD
 	ast             time.Time
-	onNewPeriod     []func(period *mpd.Period)
-	onChangedPeriod []func(period *mpd.Period)
+	onNewPeriod     []func(mpde *mpd.MPD, period *mpd.Period)
+	onChangedPeriod []func(mpde *mpd.MPD, period *mpd.Period)
 	onNewEvent      []func(event *mpd.Event, scheme string, at time.Time, duration time.Duration)
 }
 
@@ -26,19 +26,19 @@ func NewMpdDiffer(logger zerolog.Logger) *MpdDiffer {
 }
 
 // AddOnNewEvent adds a callback to be executed when a new Event appears
-func (mpdiffer *MpdDiffer) AddOnNewEvent(event func(event *mpd.Event, scheme string, at time.Time, duration time.Duration)) {
+func (mpdiffer *MpdDiffer) AddOnNewEvent(event func(ev *mpd.Event, scheme string, at time.Time, duration time.Duration)) {
 
 	mpdiffer.onNewEvent = append(mpdiffer.onNewEvent, event)
 }
 
 // AddOnNewPeriod adds a callback to be executed when a new Period appears
-func (mpdiffer *MpdDiffer) AddOnNewPeriod(event func(period *mpd.Period)) {
+func (mpdiffer *MpdDiffer) AddOnNewPeriod(event func(mpde *mpd.MPD, per *mpd.Period)) {
 
 	mpdiffer.onNewPeriod = append(mpdiffer.onNewPeriod, event)
 }
 
 // AddOnChangedPeriod adds a callback to be executed when a Period changes
-func (mpdiffer *MpdDiffer) AddOnChangedPeriod(event func(period *mpd.Period)) {
+func (mpdiffer *MpdDiffer) AddOnChangedPeriod(event func(mpde *mpd.MPD, period *mpd.Period)) {
 
 	mpdiffer.onChangedPeriod = append(mpdiffer.onChangedPeriod, event)
 }
@@ -183,6 +183,7 @@ func (md *MpdDiffer) DiffAdaptationSet(old, cur *mpd.AdaptationSet, periodStart 
 	return changed, nil
 }
 
+// PeriodStart will return the value the start of the period as a duration from the start of the timeline
 func PeriodStart(period *mpd.Period) (start time.Duration) {
 	// Calculate period start
 	if period.Start != nil {
@@ -296,7 +297,7 @@ func (md *MpdDiffer) Update(mpde *mpd.MPD) error {
 		for _, newp := range cur.Period {
 			md.AddPeriod(newp)
 			for _, cb := range md.onNewPeriod {
-				cb(newp)
+				cb(mpde, newp)
 			}
 		}
 		return nil
@@ -314,7 +315,7 @@ func (md *MpdDiffer) Update(mpde *mpd.MPD) error {
 			}
 			if d {
 				for _, cb := range md.onChangedPeriod {
-					cb(curp)
+					cb(mpde, curp)
 				}
 			}
 		} else {
@@ -324,7 +325,7 @@ func (md *MpdDiffer) Update(mpde *mpd.MPD) error {
 	for _, newp := range cur.Period {
 		if oldp := PeriodById(old.Period, newp.ID); oldp == nil {
 			for _, cb := range md.onNewPeriod {
-				cb(newp)
+				cb(mpde, newp)
 			}
 		}
 	}

@@ -137,8 +137,10 @@ func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, f
 		}
 	}
 
-	st.mpdDiffer.AddOnNewPeriod(func(period *mpd.Period) {
-		logger.Info().Msgf("New Period %s starts %s", EmptyIfNil(period.ID), st.mpdDiffer.ast.Add(PeriodStart(period)))
+	st.mpdDiffer.AddOnNewPeriod(func(mpde *mpd.MPD, period *mpd.Period) {
+		periodStart := st.mpdDiffer.ast.Add(PeriodStart(period))
+		logger.Info().Msgf("New Period %s starts %s", EmptyIfNil(period.ID), periodStart)
+		st.checkPeriodBorders(mpde, period, periodStart)
 		st.checkTrackAlignment(period)
 	})
 
@@ -147,6 +149,30 @@ func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, f
 	})
 
 	return st, nil
+}
+
+// checkPeriodBorders is called on every new period and verifies the correctness of the
+// timestamp vs MediaSegments
+func (sc *StreamChecker) checkPeriodBorders(mpde *mpd.MPD, period *mpd.Period, periodStart time.Time) {
+	if len(mpde.Period) < 2 {
+		return
+	}
+	ast := GetAst(mpde)
+	// first-to-last Period
+	ftolp := mpde.Period[len(mpde.Period)-2]
+	// Find end of it
+	_, t := PeriodSegmentLimits(ftolp, ast)
+	// Last period
+	lp := mpde.Period[len(mpde.Period)-1]
+	// Find start
+	f, _ := PeriodSegmentLimits(lp, ast)
+	ol1, ol2 := t.Sub(periodStart), periodStart.Sub(f)
+	if ol1 < 10*time.Millisecond || ol2 < 10*time.Millisecond {
+		sc.logger.Warn().Msgf("Period %s overlap old %s new %s", EmptyIfNil(period.ID), ol1, ol2)
+	} else {
+
+		sc.logger.Info().Msgf("Period %s overlap old %s new %s", EmptyIfNil(period.ID), ol1, ol2)
+	}
 }
 
 func (sc *StreamChecker) checkTrackAlignment(period *mpd.Period) {
@@ -163,7 +189,7 @@ func (sc *StreamChecker) checkTrackAlignment(period *mpd.Period) {
 		offset := float64(pto) / float64(timescale)
 
 		if oldOffset != 0 && math.Abs(offset-oldOffset) > 0.001 {
-			sc.logger.Warn().Msgf("Offset difference of %g found in AS %s of period %s", offset-oldOffset, EmptyIfNil(as.Id), EmptyIfNil(period.ID))
+			sc.logger.Warn().Msgf("Offset difference of %g found in AS %s of period %s", math.Round((offset-oldOffset)*1000)/1000, EmptyIfNil(as.Id), EmptyIfNil(period.ID))
 		}
 		oldOffset = offset
 	}

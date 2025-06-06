@@ -392,6 +392,36 @@ func EmptyIfNil(in *string) string {
 	return *in
 }
 
+// PeriodSegmentLimits returns the timerange for whitch Samples are available for all tracks
+func PeriodSegmentLimits(p *mpd.Period, ast time.Time) (from, to time.Time) {
+	to = time.Now()
+	for _, as := range p.AdaptationSets {
+		if as.SegmentTemplate != nil {
+			lfrom, lto := SumSegmentTemplate(as.SegmentTemplate, ast.Add(PeriodStart(p)))
+			if lfrom.After(from) {
+				from = lfrom
+			}
+			if lto.Before(to) {
+				to = lto
+			}
+
+		} else {
+			for _, rep := range as.Representations {
+				if rep.SegmentTemplate != nil {
+					lfrom, lto := SumSegmentTemplate(rep.SegmentTemplate, ast.Add(PeriodStart(p)))
+					if lfrom.After(from) {
+						from = lfrom
+					}
+					if lto.Before(to) {
+						to = lto
+					}
+				}
+			}
+		}
+	}
+	return
+}
+
 // ExactDuration finds the shortes Track by summing the samples for all Representations
 func ExactDuration(m *mpd.MPD) time.Duration {
 
