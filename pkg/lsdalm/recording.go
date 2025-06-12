@@ -268,32 +268,32 @@ func (re *Recording) getLoopableRange() (from, to time.Time) {
 				for r := int64(0); r < element.r+1; r++ {
 					startAbs := ast.Add(TLP2Duration(start, timescale))
 					if !startAbs.Before(from) {
-						log.Info().Msgf("Found begin at %s after %s", startAbs, from)
+						log.Debug().Msgf("Found begin at %s after %s", startAbs, from)
 						from = startAbs
 						break first
 					}
 					start += element.d
 				}
-				start = as.start
-				// Find last segment ending not later than 'to'
-				last := ast
-			second:
-				for _, element := range as.elements {
-					for r := int64(0); r < element.r+1; r++ {
-						endAbs := ast.Add(TLP2Duration(start+element.d, timescale))
-						if endAbs.After(to) {
-							log.Info().Msgf("Found end at %s before %s", last, to)
-							to = last
-							break second
-						}
-						last = endAbs
-						start += element.d
+			}
+			start = as.start
+			// Find last segment ending not later than 'to'
+			last := ast
+		second:
+			for _, element := range as.elements {
+				for r := int64(0); r < element.r+1; r++ {
+					endAbs := ast.Add(TLP2Duration(start+element.d, timescale))
+					if endAbs.After(to) {
+						log.Debug().Msgf("Found end at %s before %s", last, to)
+						to = last
+						break second
 					}
+					last = endAbs
+					start += element.d
 				}
 			}
 		}
 	}
-	log.Info().Msgf("From %s to %s Duration %s", from, to, to.Sub(from))
+	log.Debug().Msgf("From %s to %s Duration %s", from, to, to.Sub(from))
 	return
 }
 

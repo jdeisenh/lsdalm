@@ -189,7 +189,7 @@ func (sc *StreamChecker) checkTrackAlignment(period *mpd.Period) {
 		}
 		offset := float64(pto) / float64(timescale)
 
-		if oldOffset != 0 && math.Abs(offset-oldOffset) > 0.001 {
+		if oldOffset != 0 && math.Abs(offset-oldOffset) > 0.002 {
 			sc.logger.Warn().Msgf("Offset difference of %g found in AS %s of period %s", math.Round((offset-oldOffset)*1000)/1000, EmptyIfNil(as.Id), EmptyIfNil(period.ID))
 		}
 		oldOffset = offset
