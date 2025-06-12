@@ -162,17 +162,17 @@ func (sc *StreamChecker) checkPeriodBorders(mpde *mpd.MPD, period *mpd.Period, p
 	// first-to-last Period
 	ftolp := mpde.Period[len(mpde.Period)-2]
 	// Find end of it
-	_, t := PeriodSegmentLimits(ftolp, ast)
+	_, lastOfPrevious := PeriodSegmentLimits(ftolp, ast)
 	// Last period
 	lp := mpde.Period[len(mpde.Period)-1]
 	// Find start
-	f, _ := PeriodSegmentLimits(lp, ast)
-	ol1, ol2 := t.Sub(periodStart), periodStart.Sub(f)
-	if ol1 < 10*time.Millisecond || ol2 < 10*time.Millisecond {
-		sc.logger.Warn().Msgf("Period %s overlap old %s new %s", EmptyIfNil(period.ID), ol1, ol2)
+	firstOfNext, _ := PeriodSegmentLimits(lp, ast)
+	gapFromPrevious, gapToNext := periodStart.Sub(lastOfPrevious), firstOfNext.Sub(periodStart)
+	if gapFromPrevious > 10*time.Millisecond || gapToNext > 10*time.Millisecond {
+		sc.logger.Warn().Msgf("Period %s gap from old %s to new %s", EmptyIfNil(period.ID), gapFromPrevious, gapToNext)
 	} else {
 
-		sc.logger.Info().Msgf("Period %s overlap old %s new %s", EmptyIfNil(period.ID), ol1, ol2)
+		sc.logger.Info().Msgf("Period %s gap from old %s to new %s", EmptyIfNil(period.ID), gapFromPrevious, gapToNext)
 	}
 }
 

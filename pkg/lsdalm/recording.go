@@ -11,6 +11,7 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// Recording is a representation of a recording 
 type Recording struct {
 	manifestDir string
 	// Map timestamps to mpd files
@@ -23,6 +24,8 @@ type Recording struct {
 
 	// All EventStreams
 	EventStreamMap map[string]*mpd.EventStream
+	// First and last Stream time in History
+	historyStart, historyEnd time.Time
 }
 
 // HistoryElement is metadata about a stored Manifest
@@ -31,6 +34,7 @@ type HistoryElement struct {
 	Filename string
 }
 
+// Segments in History
 type Element struct {
 	d, r int64
 }
@@ -92,10 +96,20 @@ func (re *Recording) fillData(logger zerolog.Logger) error {
 		}
 	}
 
+	ast := GetAst(re.originalMpd)
 	for k, as := range re.Segments {
 		ras := re.originalMpd.Period[0].AdaptationSets[k]
+		timescale := ZeroIfNil(ras.SegmentTemplate.Timescale)
 
-		logger.Info().Msgf("%d: %s %d-%d Duration %d", len(as.elements), ras.MimeType, as.start, as.end, (as.end-as.start)*1000/int64(*ras.SegmentTemplate.Timescale))
+		from := re.history[0].At // First *fetch* time
+		to := ast.Add(TLP2Duration(as.end, timescale))
+
+		logger.Info().Msgf("%15s: %d Samples %s-%s Duration %s",
+			ras.MimeType, len(as.elements), shortT(from), shortT(to), TLP2Duration(as.end-as.start, timescale))
+		if ras.MimeType == "video/mp4" {
+			re.historyStart = from // First *sample* time
+			re.historyEnd = to     // Last on segment timeline
+		}
 	}
 
 	for sId, elem := range re.EventStreamMap {
@@ -130,6 +144,7 @@ func findSub(hist []HistoryElement, want time.Time) *HistoryElement {
 	}
 }
 
+// AddMpdToHistory will add this mpd to history by adding all new segments to history
 func (re *Recording) AddMpdToHistory(mpde *mpd.MPD) error {
 
 	if len(mpde.Period) == 0 {
@@ -208,6 +223,7 @@ func (re *Recording) FindHistory(want time.Time) *HistoryElement {
 	return &acopy
 }
 
+// getTimeLineRange finds the minimum timerange where SegmentData for all AdapationSets exists
 func (re *Recording) getTimelineRange() (from, to time.Time) {
 	if re.originalMpd == nil || len(re.originalMpd.Period) == 0 {
 		return
@@ -230,10 +246,12 @@ func (re *Recording) getTimelineRange() (from, to time.Time) {
 	return
 }
 
-// getRecordingRange gets first and last *sample* time for the manifests
+// getRecordingRange gets first and last *request* times for the manifests data
 func (re *Recording) getRecordingRange() (from, to time.Time) {
-	from = re.history[0].At
-	to = re.history[len(re.history)-1].At
+	//from = re.history[0].At
+	//to = re.history[len(re.history)-1].At
+	from = re.historyStart
+	to = re.historyEnd
 	return
 }
 
@@ -254,11 +272,12 @@ func (re *Recording) getLoopMeta(at, now time.Time, requestDuration time.Duratio
 
 	offset = at.Sub(start) % duration
 	shift = now.Add(-offset).Sub(start)
-	//sc.logger.Info().Msgf("%s %s", at, start)
+	//sc.logger.Info().Msgf("RecordingRange %s %s", at, start)
+	//sc.logger.Info().Msgf("RecordingRange %s", start.Add(duration))
 	return
 }
 
-// Find a manifest at time 'at'
+// Load a manifest close to 'at'
 func (re *Recording) loadHistoricMpd(at time.Time) (*mpd.MPD, error) {
 
 	sourceElement := re.FindHistory(at)
@@ -277,6 +296,7 @@ func (re *Recording) loadHistoricMpd(at time.Time) (*mpd.MPD, error) {
 	return mpde, nil
 }
 
+// Add will add a segment to an Adaptationset.
 func (as *AdaptationSet) Add(t, d, r int64) error {
 
 	last := len(as.elements) - 1

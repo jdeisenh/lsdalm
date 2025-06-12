@@ -17,7 +17,6 @@ import (
 // Data about our stream. Hardcoded from testing, must be dynamic
 const (
 	timeShiftWindowSize = 25 * time.Second        // timeshift buffer size. Should be taken from manifest or from samples
-	LoopPointOffset     = 10 * time.Second        // move splicepoint back in time to be outside the live Delay
 	maxMpdGap           = 30 * time.Second        // maximum gap between mpd updates
 	segmentSize         = 1920 * time.Millisecond // must be got from stream
 )
@@ -67,18 +66,19 @@ func NewStreamLooper(dumpdir string, logger zerolog.Logger) (*StreamLooper, erro
 	return st, nil
 }
 
-// BuildMpb takes the recordings original mpd and adds Segments for the indicated timestamps range
+// BuildMpd takes the recordings original mpd and adds Segments for the indicated timestamps range
 // it also shifts the Timeline by 'shift' and assigns a new id
 // ptsShift: shift presentationTime
 // periodStart: Beginning of Period
 // from, to: Segments to include (in shifted absolute time)
 func (sc *StreamLooper) BuildMpd(ptsShift time.Duration, id string, periodStart, from, to time.Time) *mpd.MPD {
-	mpde := sc.recording.originalMpd
-	outMpd := Copy(mpde)
 
-	period := mpde.Period[0] // There is only one
+	// Copy the Root Node
+	outMpd := Copy(sc.recording.originalMpd)
 
-	// OUput period
+	period := outMpd.Period[0] // There is only one
+
+	// Output period
 	outMpd.Period = make([]*mpd.Period, 0, 1)
 	// Loop over output periods in timeShiftWindow
 
@@ -89,7 +89,7 @@ func (sc *StreamLooper) BuildMpd(ptsShift time.Duration, id string, periodStart,
 	// Copy period
 	np := Copy(period)
 
-	ast := GetAst(mpde)
+	ast := GetAst(outMpd)
 
 	// Calculate period start
 	var effectivePtsShift time.Duration
@@ -123,13 +123,28 @@ func (sc *StreamLooper) BuildMpd(ptsShift time.Duration, id string, periodStart,
 		ShiftPto(nst, effectivePtsShift)
 		start := elements.start
 		timescale := ZeroIfNil(nst.Timescale)
-		pto := ZeroIfNil(nst.PresentationTimeOffset)
+		pto := ZeroIfNil(nst.PresentationTimeOffset) // In new timeframe
 		first := true
+
+		// Try to do the computation outside of the loop
+		minpts := Duration2TLP(from.Sub(periodStart), timescale) + int64(pto)
+		maxpts := Duration2TLP(to.Sub(periodStart), timescale) + int64(pto)
+		sc.logger.Debug().Msgf("Pto %s-%s vs %d %d",
+			(time.Unix(minpts/int64(timescale), 0)),
+			(time.Unix(maxpts/int64(timescale), 0)),
+			start/int64(timescale),
+			pto/timescale,
+		)
+
+	outofhere:
 		for _, s := range elements.elements {
 			for ri := int64(0); ri <= s.r; ri++ {
-				ts := periodStart.Add(TLP2Duration(int64(uint64(start)-pto), timescale))
-				d := TLP2Duration(s.d, timescale)
-				if !ts.Add(d).Before(from) && ts.Add(d).Before(to) {
+				// Append everything that overlaps the period time
+				// in other words, everything that ends after period start and starts before period end
+				if start > maxpts {
+					break outofhere
+				}
+				if start+s.d > minpts { // && start < maxpts {
 					t := uint64(0)
 					if first {
 						t = uint64(start)
@@ -139,8 +154,8 @@ func (sc *StreamLooper) BuildMpd(ptsShift time.Duration, id string, periodStart,
 				}
 				start += s.d
 			}
-
 		}
+		//lastOne := periodStart.Add(TLP2Duration(int64(uint64(lastappended)-pto), timescale))
 		if len(nstl.S) == 0 {
 			nst.SegmentTimeline = nil
 		}
@@ -186,43 +201,51 @@ func (sc *StreamLooper) BuildMpd(ptsShift time.Duration, id string, periodStart,
 	return outMpd
 }
 
-// GetLooped generates a Manifest by finding the manifest before now%duration
+// GetLooped generates a Manifest by combining one or two timeshifted parts of the recording into a new mpd 
+// and rendering it out
 func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Duration) ([]byte, error) {
 
-	offset, shift, duration, startOfRecording := sc.recording.getLoopMeta(at, now, requestDuration)
-	sc.logger.Info().Msgf("Offset: %s TimeShift: %s LoopDuration: %s LoopStart:%s At %s",
-		RoundToS(offset), RoundToS(shift), RoundToS(duration), shortT(startOfRecording), shortT(at))
+	offset, timeShift, loopLength, startOfRecording := sc.recording.getLoopMeta(at, now, requestDuration)
+	sc.logger.Info().Msgf("Offset: %6s TimeShift: %s LoopDuration: %s OrgStart:%s OrgPosition %s",
+		RoundToS(offset), RoundToS(timeShift), RoundToS(loopLength), shortT(startOfRecording), shortT(startOfRecording.Add(offset)))
 
 	// Check if we are around the loop point
 	var mpdCurrent *mpd.MPD
 	if offset < timeShiftWindowSize {
 		// We are just after the loop point and have to add date from the previous period
-		sc.logger.Debug().Msgf("Loop point: %s", shortT(startOfRecording.Add(shift)))
+		// Todo: Generalize for several periods. This will only work with max two
+		sc.logger.Debug().Msgf("Loop point: %s", shortT(startOfRecording.Add(timeShift)))
 		mpdPrevious := sc.BuildMpd(
-			shift-duration,
-			fmt.Sprintf("Id-%d", shift/duration-1),
-			startOfRecording.Add(shift).Add(-duration),
-			now.Add(-timeShiftWindowSize),
-			startOfRecording.Add(shift),
+			timeShift-loopLength,
+			fmt.Sprintf("Id-%d", timeShift/loopLength-1),
+			startOfRecording.Add(timeShift).Add(-loopLength),
+			startOfRecording.Add(timeShift).Add(-loopLength),
+			startOfRecording.Add(timeShift),
 		)
+		pf, pt := PeriodSegmentLimits(mpdPrevious.Period[0], GetAst(mpdPrevious))
+		sc.logger.Info().Msgf("A %s to %s asked %s Duration %s", shortT(pf.Add(-timeShift+loopLength)), shortT(pt.Add(-timeShift+loopLength)),
+			shortT(startOfRecording.Add(loopLength)), pt.Sub(pf))
 		if offset > segmentSize {
 			// Ensure period not empty
 			mpdCurrent = sc.BuildMpd(
-				shift,
-				fmt.Sprintf("Id-%d", shift/duration),
-				startOfRecording.Add(shift),
-				startOfRecording.Add(shift),
+				timeShift,
+				fmt.Sprintf("Id-%d", timeShift/loopLength),
+				startOfRecording.Add(timeShift),
+				startOfRecording.Add(timeShift),
 				now,
 			)
+			pf, pt := PeriodSegmentLimits(mpdCurrent.Period[0], GetAst(mpdCurrent))
+			sc.logger.Debug().Msgf("B %s to %s Duration %s", shortT(pf), shortT(pt), pt.Sub(pf))
 		}
 		mpdCurrent = mergeMpd(mpdPrevious, mpdCurrent)
 	} else {
 		// No loop point
 		mpdCurrent = sc.BuildMpd(
-			shift,
-			fmt.Sprintf("Id-%d", shift/duration),
-			startOfRecording.Add(shift),
-			now.Add(-timeShiftWindowSize),
+			timeShift,
+			fmt.Sprintf("Id-%d", timeShift/loopLength),
+			startOfRecording.Add(timeShift),
+			startOfRecording.Add(timeShift),
+			//now.Add(-timeShiftWindowSize),
 			now,
 		)
 	}

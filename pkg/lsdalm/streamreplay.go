@@ -9,8 +9,8 @@ import (
 	"os"
 	"path"
 	"strconv"
-	"time"
 	"strings"
+	"time"
 
 	"github.com/jdeisenh/lsdalm/pkg/go-mpd"
 	"github.com/rs/zerolog"
@@ -239,7 +239,7 @@ func (sc *StreamReplay) GetLooped(at, now time.Time, requestDuration time.Durati
 	return afterEncode, nil
 }
 
-// GetArchived generates a Manifest by finding the manifest closest 
+// GetArchived generates a Manifest by finding the manifest closest
 func (sc *StreamReplay) GetArchived(timeShift time.Duration, at time.Time) ([]byte, error) {
 
 	mpdCurrent, err := sc.loadHistoricMpd(at.Add(-timeShift))
@@ -403,7 +403,7 @@ func (sc *StreamReplay) Handler(w http.ResponseWriter, r *http.Request) {
 	w.Write(buf)
 }
 
-// FileHanlder serves data
+// FileHandler serves data
 func (sc *StreamReplay) FileHandler(w http.ResponseWriter, r *http.Request) {
 	filepath := path.Join(sc.dumpdir, r.URL.Path)
 	sc.logger.Trace().Str("path", filepath).Msg("Access")
@@ -411,16 +411,17 @@ func (sc *StreamReplay) FileHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (sc *StreamReplay) ShowStats() {
-	if len(sc.history) > 0 {
-		first := sc.history[0].At
-		last := sc.history[len(sc.history)-1].At
-		sc.logger.Info().Msgf("Original source: %s", sc.storageMeta.ManifestUrl)
-		sc.logger.Info().Msgf("Recorded %d manifests from %s to %s (%s)",
-			len(sc.history),
-			first.Format(time.TimeOnly),
-			last.Format(time.TimeOnly),
-			last.Sub(first),
-		)
+	if len(sc.history) == 0 {
+		return
 	}
+	first := sc.history[0].At
+	last := sc.history[len(sc.history)-1].At
+	sc.logger.Info().Msgf("Original source: %s", sc.storageMeta.ManifestUrl)
+	sc.logger.Info().Msgf("Recorded %d manifests from %s to %s (%s)",
+		len(sc.history),
+		first.Format(time.TimeOnly),
+		last.Format(time.TimeOnly),
+		last.Sub(first),
+	)
 
 }
