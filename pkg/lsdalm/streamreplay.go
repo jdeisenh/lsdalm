@@ -10,6 +10,7 @@ import (
 	"path"
 	"strconv"
 	"time"
+	"strings"
 
 	"github.com/jdeisenh/lsdalm/pkg/go-mpd"
 	"github.com/rs/zerolog"
@@ -185,7 +186,7 @@ func (sc *StreamReplay) AdjustMpd(mpde *mpd.MPD, shift time.Duration, localMedia
 		if sc.originalBaseUrl != nil && len(period.BaseURL) > 0 && period.BaseURL[0].Value != "" {
 			baseurl := period.BaseURL[0].Value
 			baseurlUrl := ConcatURL(sc.originalBaseUrl, baseurl)
-			if localMedia {
+			if localMedia && !strings.HasPrefix(baseurlUrl.String(), "https://svc49.cdn-t0.tv.telekom.net/") {
 
 				period.BaseURL[0].Value = baseurlUrl.Path[1:]
 			} else {
@@ -218,7 +219,7 @@ func (sc *StreamReplay) loadHistoricMpd(at time.Time) (*mpd.MPD, error) {
 // GetLooped generates a Manifest by finding the manifest before now%duration
 func (sc *StreamReplay) GetLooped(at, now time.Time, requestDuration time.Duration) ([]byte, error) {
 
-	offset, shift, duration, startOfRecording := sc.getLoopMeta(at, now, requestDuration)
+	offset, shift, duration, startOfRecording := sc.getLoopMeta(at, at, requestDuration)
 	sc.logger.Info().Msgf("Offset: %s TimeShift: %s LoopDuration: %s LoopStart:%s Original At %s",
 		RoundToS(offset), RoundToS(shift), RoundToS(duration), shortT(startOfRecording), shortT(startOfRecording.Add(offset)))
 	mpdCurrent, err := sc.loadHistoricMpd(startOfRecording.Add(offset))
@@ -238,19 +239,17 @@ func (sc *StreamReplay) GetLooped(at, now time.Time, requestDuration time.Durati
 	return afterEncode, nil
 }
 
-// GetArchived generates a Manifest by finding the manifest at 'at'
-func (sc *StreamReplay) GetArchived(to time.Duration, now time.Time) ([]byte, error) {
+// GetArchived generates a Manifest by finding the manifest closest 
+func (sc *StreamReplay) GetArchived(timeShift time.Duration, at time.Time) ([]byte, error) {
 
-	mpdCurrent, err := sc.loadHistoricMpd(now.Add(-to))
+	mpdCurrent, err := sc.loadHistoricMpd(at.Add(-timeShift))
 	if err != nil {
 		return []byte{}, err
 	}
-	// This must be constant
-	shift := to
+	// This must be constant for all updates of this session
+	sc.AdjustMpd(mpdCurrent, timeShift, sc.storageMeta.HaveMedia) // Manipulate
 
-	sc.AdjustMpd(mpdCurrent, shift, sc.storageMeta.HaveMedia) // Manipulate
-
-	sc.logger.Debug().Msgf("Move period: %s", shift)
+	sc.logger.Debug().Msgf("Move period: %s", timeShift)
 
 	// re-encode
 	afterEncode, err := mpdCurrent.Encode()
@@ -363,7 +362,7 @@ func (sc *StreamReplay) Handler(w http.ResponseWriter, r *http.Request) {
 	}
 	// to timeoffset
 	ts := qm["to"]
-	var to time.Duration
+	var timeShift time.Duration
 	if len(ts) > 0 {
 		t, err := strconv.Atoi(ts[0])
 		if err != nil {
@@ -371,8 +370,8 @@ func (sc *StreamReplay) Handler(w http.ResponseWriter, r *http.Request) {
 		} else if t < 0 && t > 1e6 {
 			sc.logger.Warn().Msg("Implausable time offset, ignoring")
 		} else {
-			to = time.Duration(t) * time.Second
-			startat = startat.Add(-to)
+			timeShift = time.Duration(t) * time.Second
+			startat = startat.Add(-timeShift)
 		}
 	}
 	/*
@@ -394,7 +393,7 @@ func (sc *StreamReplay) Handler(w http.ResponseWriter, r *http.Request) {
 	if sc.isPast {
 		buf, err = sc.GetLooped(startat, now, duration)
 	} else {
-		buf, err = sc.GetArchived(to, now)
+		buf, err = sc.GetArchived(timeShift, now)
 	}
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
