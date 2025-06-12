@@ -9,10 +9,10 @@ import (
 
 	"github.com/jdeisenh/lsdalm/pkg/go-mpd"
 	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
+	//"github.com/rs/zerolog/log"
 )
 
-// Recording is a representation of a recording 
+// Recording is a representation of a recording
 type Recording struct {
 	manifestDir string
 	// Map timestamps to mpd files
@@ -229,16 +229,16 @@ func (re *Recording) getTimelineRange() (from, to time.Time) {
 	if re.firstMpd == nil || len(re.firstMpd.Period) == 0 {
 		return
 	}
-	to=time.Now()
+	to = time.Now()
 	ast := GetAst(re.firstMpd)
 	// First period only
 	period := re.firstMpd.Period[0]
-	from=re.history[0].At // Limit to begin of recording
+	from = re.history[0].At // Limit to begin of recording
 	for asi, as := range period.AdaptationSets {
 		asf := re.Segments[asi]
 		timescale := ZeroIfNil(as.SegmentTemplate.Timescale)
 		start := ast.Add(TLP2Duration(asf.start, timescale))
-		end:= ast.Add(TLP2Duration(asf.end, timescale))
+		end := ast.Add(TLP2Duration(asf.end, timescale))
 		if from.IsZero() || start.After(from) {
 			from = start
 		}
