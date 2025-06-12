@@ -29,6 +29,7 @@ const (
 	SchemeScteXml    = "urn:scte:scte35:2014:xml+bin"      // The one scte scheme we support right now
 	DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 	maxTimeDiff      = time.Millisecond // What segmment duration/offset we tolerate before warning (due to rounding errors)
+	cutSegmentsAt    = 5 * time.Minute  // Fetch only segments within this range of Now
 )
 
 // Modes support for checking media segments
@@ -311,12 +312,20 @@ func (sc *StreamChecker) executeFetchAndStore(fetchme SegmentInfo) error {
 				diffD := fetchme.D - d
 				absDiffT := max(diffT, -diffT)
 				absDiffD := max(diffD, -diffD)
-				if absDiffD > maxTimeDiff || absDiffT > maxTimeDiff {
-					sc.logger.Error().Str("url", fetchme.Url.String()).
+				if absDiffD > maxTimeDiff {
+					sc.logger.Error().
+						Str("url", fetchme.Url.String()).
 						Str("MDur", fetchme.D.String()).
-						Str("SDur", d.String()).Str("T", t.String()).
+						Str("SDur", d.String()).
+						Msg("Mediasegment duration mismatch")
+				}
+				if absDiffT > maxTimeDiff {
+					sc.logger.Error().
+						Str("url", fetchme.Url.String()).
+						Str("M", t.String()).
+						Str("S", fetchme.T.String()).
 						Str("Offset", diffT.String()).
-						Msg("Mediasegment Offset/Duration Mismatch")
+						Msg("Mediasegment offset mismatch")
 				}
 			}
 		}
@@ -492,8 +501,8 @@ func (sc *StreamChecker) OnNewMpd(mpde *mpd.MPD) error {
 	var err error
 	if sc.fetchMode > MODE_NOFETCH {
 		err = OnAllSegmentUrls(mpde, sc.sourceUrl, func(url *url.URL, t, d time.Duration) error {
-			if t != 0 && d != 0 && time.Since(ast.Add(t)) > 5*time.Minute {
-				// Skip too old segments
+			if t != 0 && d != 0 && cutSegmentsAt > 0 && time.Since(ast.Add(t)) > cutSegmentsAt {
+				// Skip too old segments, but not init segments
 				return nil
 			}
 			return sc.fetchAndStoreSegment(url, t, d)
@@ -530,7 +539,7 @@ func (sc *StreamChecker) walkMpd(mpde *mpd.MPD) error {
 				// signal, content
 				wallSpliceStart := periodStart.Add(TLP2Duration(int64(pt-pto), timescale))
 				wallSpliceDuration := TLP2Duration(int64(duration), timescale)
-				//sc.logger.Info().Msgf("SCTE35 Id: %d Duration: %s Time %s", event.Id, wallSpliceDuration, shortT(wallSpliceStart))
+				sc.logger.Info().Msgf("SCTE35 Id: %d Duration: %s Time %s", event.Id, wallSpliceDuration, shortT(wallSpliceStart))
 				// store
 				sc.upcomingSplices.AddIfNew(wallSpliceStart, fmt.Sprintf("evid_%d", event.Id))
 				sc.upcomingSplices.AddIfNew(wallSpliceStart.Add(wallSpliceDuration), fmt.Sprintf("evid_%d_end", event.Id))
