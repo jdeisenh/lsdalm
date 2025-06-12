@@ -9,6 +9,7 @@ import (
 
 	"github.com/jdeisenh/lsdalm/pkg/go-mpd"
 	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
 // Recording is a representation of a recording 
@@ -17,7 +18,7 @@ type Recording struct {
 	// Map timestamps to mpd files
 	history []HistoryElement
 
-	originalMpd *mpd.MPD
+	firstMpd *mpd.MPD
 
 	// All the samples we have
 	Segments []*AdaptationSet
@@ -96,9 +97,9 @@ func (re *Recording) fillData(logger zerolog.Logger) error {
 		}
 	}
 
-	ast := GetAst(re.originalMpd)
+	ast := GetAst(re.firstMpd)
 	for k, as := range re.Segments {
-		ras := re.originalMpd.Period[0].AdaptationSets[k]
+		ras := re.firstMpd.Period[0].AdaptationSets[k]
 		timescale := ZeroIfNil(ras.SegmentTemplate.Timescale)
 
 		from := re.history[0].At // First *fetch* time
@@ -204,8 +205,8 @@ func (re *Recording) AddMpdToHistory(mpde *mpd.MPD) error {
 
 		}
 	}
-	if re.originalMpd == nil {
-		re.originalMpd = mpde
+	if re.firstMpd == nil {
+		re.firstMpd = mpde
 	}
 	return nil
 
@@ -225,22 +226,24 @@ func (re *Recording) FindHistory(want time.Time) *HistoryElement {
 
 // getTimeLineRange finds the minimum timerange where SegmentData for all AdapationSets exists
 func (re *Recording) getTimelineRange() (from, to time.Time) {
-	if re.originalMpd == nil || len(re.originalMpd.Period) == 0 {
+	if re.firstMpd == nil || len(re.firstMpd.Period) == 0 {
 		return
 	}
-	ast := GetAst(re.originalMpd)
+	to=time.Now()
+	ast := GetAst(re.firstMpd)
 	// First period only
-	period := re.originalMpd.Period[0]
+	period := re.firstMpd.Period[0]
+	from=re.history[0].At // Limit to begin of recording
 	for asi, as := range period.AdaptationSets {
 		asf := re.Segments[asi]
 		timescale := ZeroIfNil(as.SegmentTemplate.Timescale)
-		ls := ast.Add(TLP2Duration(asf.start, timescale))
-		le := ast.Add(TLP2Duration(asf.end, timescale))
-		if from.IsZero() || from.After(ls) {
-			from = ls
+		start := ast.Add(TLP2Duration(asf.start, timescale))
+		end:= ast.Add(TLP2Duration(asf.end, timescale))
+		if from.IsZero() || start.After(from) {
+			from = start
 		}
-		if to.IsZero() || to.Before(le) {
-			to = le
+		if !end.IsZero() && end.After(ast) && end.Before(to) {
+			to = end
 		}
 	}
 	return
@@ -257,7 +260,7 @@ func (re *Recording) getRecordingRange() (from, to time.Time) {
 
 // Return loop metadata
 // for the position at, return offset (to recording), timeshift und loop duration
-func (re *Recording) getLoopMeta(at, now time.Time, requestDuration time.Duration) (offset, shift, duration time.Duration, start time.Time) {
+func (re *Recording) getLoopMeta(at, now time.Time) (offset, shift, duration time.Duration, start time.Time) {
 
 	// Calculate the offset in the recording buffer and the timeshift (added to timestamps)
 	// Invariants:
@@ -267,13 +270,12 @@ func (re *Recording) getLoopMeta(at, now time.Time, requestDuration time.Duratio
 	// Data from history buffer
 	// This is inexact, the last might not have all Segments downloaded
 	var end time.Time
-	start, end = re.getRecordingRange()
+	start, end = re.getTimelineRange()
 	duration = end.Sub(start)
 
 	offset = at.Sub(start) % duration
 	shift = now.Add(-offset).Sub(start)
-	//sc.logger.Info().Msgf("RecordingRange %s %s", at, start)
-	//sc.logger.Info().Msgf("RecordingRange %s", start.Add(duration))
+	//log.Info().Msgf("RecordingRange %s %s", start, end)
 	return
 }
 

@@ -74,7 +74,7 @@ func NewStreamLooper(dumpdir string, logger zerolog.Logger) (*StreamLooper, erro
 func (sc *StreamLooper) BuildMpd(ptsShift time.Duration, id string, periodStart, from, to time.Time) *mpd.MPD {
 
 	// Copy the Root Node
-	outMpd := Copy(sc.recording.originalMpd)
+	outMpd := Copy(sc.recording.firstMpd)
 
 	period := outMpd.Period[0] // There is only one
 
@@ -205,7 +205,7 @@ func (sc *StreamLooper) BuildMpd(ptsShift time.Duration, id string, periodStart,
 // and rendering it out
 func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Duration) ([]byte, error) {
 
-	offset, timeShift, loopLength, startOfRecording := sc.recording.getLoopMeta(at, now, requestDuration)
+	offset, timeShift, loopLength, startOfRecording := sc.recording.getLoopMeta(at, now)
 	sc.logger.Info().Msgf("Offset: %6s TimeShift: %s LoopDuration: %s OrgStart:%s OrgPosition %s",
 		RoundToS(offset), RoundToS(timeShift), RoundToS(loopLength), shortT(startOfRecording), shortT(startOfRecording.Add(offset)))
 
@@ -213,7 +213,7 @@ func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Durati
 	var mpdCurrent *mpd.MPD
 	if offset < timeShiftWindowSize {
 		// We are just after the loop point and have to add date from the previous period
-		// Todo: Generalize for several periods. This will only work with max two
+		// Todo: Generalize for several periods. Allow serveral repeats within the DVR window
 		sc.logger.Debug().Msgf("Loop point: %s", shortT(startOfRecording.Add(timeShift)))
 		mpdPrevious := sc.BuildMpd(
 			timeShift-loopLength,
@@ -223,7 +223,7 @@ func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Durati
 			startOfRecording.Add(timeShift),
 		)
 		pf, pt := PeriodSegmentLimits(mpdPrevious.Period[0], GetAst(mpdPrevious))
-		sc.logger.Info().Msgf("A %s to %s asked %s Duration %s", shortT(pf.Add(-timeShift+loopLength)), shortT(pt.Add(-timeShift+loopLength)),
+		sc.logger.Debug().Msgf("A %s to %s asked %s Duration %s", shortT(pf.Add(-timeShift+loopLength)), shortT(pt.Add(-timeShift+loopLength)),
 			shortT(startOfRecording.Add(loopLength)), pt.Sub(pf))
 		if offset > segmentSize {
 			// Ensure period not empty
@@ -264,7 +264,7 @@ func (sc *StreamLooper) GetStatic() ([]byte, error) {
 	start, end := sc.recording.getTimelineRange()
 	//start, end = sc.recording.getRecordingRange()
 	duration := end.Sub(start)
-	ast := GetAst(sc.recording.originalMpd)
+	ast := GetAst(sc.recording.firstMpd)
 	sc.logger.Debug().Msgf("Start %s End %s Duration %s Shift %s",
 		shortT(start), shortT(end), RoundToS(duration), start.Sub(ast))
 
