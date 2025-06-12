@@ -539,7 +539,7 @@ func (sc *StreamChecker) walkMpd(mpde *mpd.MPD) error {
 				// signal, content
 				wallSpliceStart := periodStart.Add(TLP2Duration(int64(pt-pto), timescale))
 				wallSpliceDuration := TLP2Duration(int64(duration), timescale)
-				sc.logger.Info().Msgf("SCTE35 Id: %d Duration: %s Time %s", event.Id, wallSpliceDuration, shortT(wallSpliceStart))
+				sc.logger.Debug().Msgf("SCTE35 Id: %d Duration: %s Time %s", event.Id, wallSpliceDuration, shortT(wallSpliceStart))
 				// store
 				sc.upcomingSplices.AddIfNew(wallSpliceStart, fmt.Sprintf("evid_%d", event.Id))
 				sc.upcomingSplices.AddIfNew(wallSpliceStart.Add(wallSpliceDuration), fmt.Sprintf("evid_%d_end", event.Id))

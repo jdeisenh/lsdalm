@@ -9,7 +9,7 @@ import (
 
 	"github.com/jdeisenh/lsdalm/pkg/go-mpd"
 	"github.com/rs/zerolog"
-	//"github.com/rs/zerolog/log"
+	"github.com/rs/zerolog/log"
 )
 
 // Recording is a representation of a recording
@@ -249,6 +249,54 @@ func (re *Recording) getTimelineRange() (from, to time.Time) {
 	return
 }
 
+func (re *Recording) getLoopableRange() (from, to time.Time) {
+
+	from, to = re.getTimelineRange()
+	ast := GetAst(re.firstMpd)
+	for k, as := range re.Segments {
+		ras := re.firstMpd.Period[0].AdaptationSets[k]
+		timescale := ZeroIfNil(ras.SegmentTemplate.Timescale)
+
+		//from := re.history[0].At // First *fetch* time
+		//to := ast.Add(TLP2Duration(as.end, timescale))
+
+		if ras.MimeType == "video/mp4" {
+			// Find the first video segment with pts greater or equal
+			start := as.start
+		first:
+			for _, element := range as.elements {
+				for r := int64(0); r < element.r+1; r++ {
+					startAbs := ast.Add(TLP2Duration(start, timescale))
+					if !startAbs.Before(from) {
+						log.Info().Msgf("Found begin at %s after %s", startAbs, from)
+						from = startAbs
+						break first
+					}
+					start += element.d
+				}
+				start = as.start
+				// Find last segment ending not later than 'to'
+				last := ast
+			second:
+				for _, element := range as.elements {
+					for r := int64(0); r < element.r+1; r++ {
+						endAbs := ast.Add(TLP2Duration(start+element.d, timescale))
+						if endAbs.After(to) {
+							log.Info().Msgf("Found end at %s before %s", last, to)
+							to = last
+							break second
+						}
+						last = endAbs
+						start += element.d
+					}
+				}
+			}
+		}
+	}
+	log.Info().Msgf("From %s to %s Duration %s", from, to, to.Sub(from))
+	return
+}
+
 // getRecordingRange gets first and last *request* times for the manifests data
 func (re *Recording) getRecordingRange() (from, to time.Time) {
 	//from = re.history[0].At
@@ -270,7 +318,7 @@ func (re *Recording) getLoopMeta(at, now time.Time) (offset, shift, duration tim
 	// Data from history buffer
 	// This is inexact, the last might not have all Segments downloaded
 	var end time.Time
-	start, end = re.getTimelineRange()
+	start, end = re.getLoopableRange()
 	duration = end.Sub(start)
 
 	offset = at.Sub(start) % duration
