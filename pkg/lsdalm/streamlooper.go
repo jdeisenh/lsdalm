@@ -16,7 +16,7 @@ import (
 
 // Data about our stream. Hardcoded from testing, must be dynamic
 const (
-	timeShiftWindowSize = 25 * time.Second        // timeshift buffer size. Should be taken from manifest or from samples
+	timeShiftWindowSize = 120 * time.Second       // timeshift buffer size. Should be taken from manifest or from samples
 	maxMpdGap           = 30 * time.Second        // maximum gap between mpd updates
 	segmentSize         = 1920 * time.Millisecond // must be got from stream
 )
@@ -201,7 +201,7 @@ func (sc *StreamLooper) BuildMpd(ptsShift time.Duration, id string, periodStart,
 	return outMpd
 }
 
-// GetLooped generates a Manifest by combining one or two timeshifted parts of the recording into a new mpd 
+// GetLooped generates a Manifest by combining one or two timeshifted parts of the recording into a new mpd
 // and rendering it out
 func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Duration) ([]byte, error) {
 
@@ -209,6 +209,13 @@ func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Durati
 	sc.logger.Info().Msgf("Offset: %6s TimeShift: %s LoopDuration: %s OrgStart:%s OrgPosition %s",
 		RoundToS(offset), RoundToS(timeShift), RoundToS(loopLength), shortT(startOfRecording), shortT(startOfRecording.Add(offset)))
 
+	/*
+		// Fill timeShiftWindow with loops...
+		kio := timeShiftWindowSize/loopLength*loopLength + timeShiftWindowSize
+		for first := startOfRecording.Add(timeShift - kio); first.Before(now); first = first.Add(loopLength) {
+			sc.logger.Info().Msgf("Period ad %s %s", first, kio)
+		}
+	*/
 	// Check if we are around the loop point
 	var mpdCurrent *mpd.MPD
 	if offset < timeShiftWindowSize {

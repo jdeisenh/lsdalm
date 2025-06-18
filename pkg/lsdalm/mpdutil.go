@@ -81,12 +81,12 @@ func Append(st *mpd.SegmentTimeline, t, d uint64, r int64) {
 }
 
 // walkSegmentTemplate walks a segmentTemplate and calls 'action' on all media Segments with their full URL
-func WalkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId string, action func(*url.URL, time.Duration, time.Duration) error) error {
+func WalkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId string, start time.Duration, action func(*url.URL, time.Duration, time.Duration, time.Duration) error) error {
 
 	pathTemplate := NewPathReplacer(*st.Media)
 	if st.Initialization != nil {
 		init := strings.Replace(*st.Initialization, "$RepresentationID$", repId, 1)
-		action(segmentPath.JoinPath(init), 0, 0)
+		action(segmentPath.JoinPath(init), 0, 0, 0)
 	}
 	// Walk the Segment
 	if st.SegmentTimeline == nil {
@@ -97,16 +97,16 @@ func WalkSegmentTemplate(st *mpd.SegmentTemplate, segmentPath *url.URL, repId st
 	if st.StartNumber != nil {
 		number = int(*st.StartNumber)
 	}
-	timescale := uint64(1)
-	if st.Timescale != nil {
-		timescale = *st.Timescale
-	}
+	timescale := ZeroIfNil(st.Timescale)
+	pto := ZeroIfNil(st.PresentationTimeOffset)
+
+	offset := start + TLP2Duration(int64(pto), timescale)
 
 	for t, d := range All(stl) {
 		ppa := pathTemplate.ToPath(int(t), number, repId)
 		//fmt.Printf("Path %s:%s\n", media, ppa)
 		fullUrl := segmentPath.JoinPath(ppa)
-		action(fullUrl, TLP2Duration(int64(t), timescale), TLP2Duration(int64(d), timescale))
+		action(fullUrl, TLP2Duration(int64(t), timescale), TLP2Duration(int64(d), timescale), offset)
 		number++
 	}
 	return nil
@@ -229,9 +229,10 @@ func ShiftPto(st *mpd.SegmentTemplate, shiftValue time.Duration) {
 
 // Iterate through all periods, representation, segmentTimeline and
 // call 'action' with the URL
-func OnAllSegmentUrls(mpd *mpd.MPD, mpdUrl *url.URL, action func(*url.URL, time.Duration, time.Duration) error) error {
+func OnAllSegmentUrls(mpd *mpd.MPD, mpdUrl *url.URL, action func(*url.URL, time.Duration, time.Duration, time.Duration) error) error {
 	// Walk all Periods, AdaptationSets and Representations
 	for _, period := range mpd.Period {
+		start := GetStart(period)
 		segmentPath := segmentPathFromPeriod(period, mpdUrl)
 		for _, as := range period.AdaptationSets {
 			for _, pres := range as.Representations {
@@ -240,11 +241,11 @@ func OnAllSegmentUrls(mpd *mpd.MPD, mpdUrl *url.URL, action func(*url.URL, time.
 				}
 				repId := *pres.ID
 				if as.SegmentTemplate != nil {
-					if err := WalkSegmentTemplate(as.SegmentTemplate, segmentPath, repId, action); err != nil {
+					if err := WalkSegmentTemplate(as.SegmentTemplate, segmentPath, repId, start, action); err != nil {
 						break
 					}
 				} else if pres.SegmentTemplate != nil {
-					if err := WalkSegmentTemplate(pres.SegmentTemplate, segmentPath, repId, action); err != nil {
+					if err := WalkSegmentTemplate(pres.SegmentTemplate, segmentPath, repId, start, action); err != nil {
 						break
 					}
 				}
@@ -364,6 +365,16 @@ func GetAst(in *mpd.MPD) time.Time {
 		ast = time.Time(*in.AvailabilityStartTime)
 	}
 	return ast
+}
+
+// GetStart get the start value of a period as time.Duration.
+// returns 0 if not given or invalid
+func GetStart(period *mpd.Period) time.Duration {
+	if period.Start == nil {
+		return 0
+	}
+	startmed, _ := (*period.Start).ToNanoseconds()
+	return time.Duration(startmed)
 }
 
 // Copy is a generic that returns a shallow copy of the original element

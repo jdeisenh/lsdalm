@@ -45,8 +45,8 @@ type FetchMode int
 
 // URL and data to verify for a single segment
 type SegmentInfo struct {
-	Url  *url.URL
-	T, D time.Duration
+	Url  *url.URL      // URL to fetch
+	T, D time.Duration // Time, Duration in Segment (PTS, from Period Start
 }
 
 type StreamChecker struct {
@@ -306,7 +306,7 @@ func (sc *StreamChecker) executeFetchAndStore(fetchme SegmentInfo) error {
 		if err != nil {
 			sc.logger.Error().Err(err).Msg("Decode media segment")
 		} else {
-			sc.logger.Trace().Msgf("T:%s D:%s", t, d)
+			sc.logger.Debug().Msgf("T:%s D:%s", t, d)
 			if fetchme.T != 0 || fetchme.D != 0 {
 				diffT := fetchme.T - t
 				diffD := fetchme.D - d
@@ -315,15 +315,15 @@ func (sc *StreamChecker) executeFetchAndStore(fetchme SegmentInfo) error {
 				if absDiffD > maxTimeDiff {
 					sc.logger.Error().
 						Str("url", fetchme.Url.String()).
-						Str("MDur", fetchme.D.String()).
-						Str("SDur", d.String()).
+						Str("MftDur", fetchme.D.String()).
+						Str("SegDur", d.String()).
 						Msg("Mediasegment duration mismatch")
 				}
 				if absDiffT > maxTimeDiff {
 					sc.logger.Error().
 						Str("url", fetchme.Url.String()).
-						Str("M", t.String()).
-						Str("S", fetchme.T.String()).
+						Str("MftT", t.String()).
+						Str("SegT", fetchme.T.String()).
 						Str("Offset", diffT.String()).
 						Msg("Mediasegment offset mismatch")
 				}
@@ -353,8 +353,11 @@ func (sc *StreamChecker) decodeSegment(buf []byte) (offset, duration time.Durati
 	for _, box := range parsedMp4.Children {
 		switch box.Type() {
 		case "sidx":
-			//err = box.Info(w, specificBoxLevels, "", "  ")
+			//err = box.Info(os.Stderr, "all:1", "", "  ")
 			sidx := box.(*mp4.SidxBox)
+			if sidx == nil {
+				break
+			}
 			var ssd uint32
 			for _, m := range sidx.SidxRefs {
 				ssd += m.SubSegmentDuration
@@ -500,8 +503,9 @@ func (sc *StreamChecker) OnNewMpd(mpde *mpd.MPD) error {
 	ast := GetAst(mpde)
 	var err error
 	if sc.fetchMode > MODE_NOFETCH {
-		err = OnAllSegmentUrls(mpde, sc.sourceUrl, func(url *url.URL, t, d time.Duration) error {
-			if t != 0 && d != 0 && cutSegmentsAt > 0 && time.Since(ast.Add(t)) > cutSegmentsAt {
+		err = OnAllSegmentUrls(mpde, sc.sourceUrl, func(url *url.URL, t, d, pStart time.Duration) error {
+			if t != 0 && d != 0 && cutSegmentsAt > 0 && time.Since(ast.Add(pStart+t)) > cutSegmentsAt {
+				sc.logger.Trace().Msgf("Skip: %s Age %s ", url, time.Since(ast.Add(pStart+t)))
 				// Skip too old segments, but not init segments
 				return nil
 			}
@@ -696,9 +700,11 @@ func (sc *StreamChecker) fetcher() {
 			// Exit signal
 			break
 		}
-		sc.haveMutex.Lock()
-		delete(sc.haveMap, i.Url.Path)
-		sc.haveMutex.Unlock()
+		if sc.fetchMode > MODE_VERIFY {
+			sc.haveMutex.Lock()
+			delete(sc.haveMap, i.Url.Path)
+			sc.haveMutex.Unlock()
+		}
 
 		sc.executeFetchAndStore(i)
 	}
