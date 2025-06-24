@@ -28,7 +28,7 @@ const (
 	dateShortFmt     = "15:04:05.00"                       // Used in logging dates
 	SchemeScteXml    = "urn:scte:scte35:2014:xml+bin"      // The one scte scheme we support right now
 	DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
-	maxTimeDiff      = time.Millisecond // What segmment duration/offset we tolerate before warning (due to rounding errors)
+	maxTimeDiff      = time.Millisecond // What segment duration/offset we tolerate before warning (due to rounding errors)
 	cutSegmentsAt    = 5 * time.Minute  // Fetch only segments within this range of Now
 )
 
@@ -190,7 +190,7 @@ func (sc *StreamChecker) checkTrackAlignment(period *mpd.Period) {
 		offset := float64(pto) / float64(timescale)
 
 		if oldOffset != 0 && math.Abs(offset-oldOffset) > 0.002 {
-			sc.logger.Warn().Msgf("Offset difference of %g found in AS %s of period %s", math.Round((offset-oldOffset)*1000)/1000, EmptyIfNil(as.Id), EmptyIfNil(period.ID))
+			sc.logger.Warn().Msgf("Offset difference of %g s found in AS %s of period %s", math.Round((offset-oldOffset)*1000)/1000, EmptyIfNil(as.Id), EmptyIfNil(period.ID))
 		}
 		oldOffset = offset
 	}
