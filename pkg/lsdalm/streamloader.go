@@ -86,7 +86,7 @@ func (sc *StreamLoader) fetchManifest(ses *Session) error {
 
 	req.Header.Set("User-Agent", sc.userAgent)
 	// We won't be able to decode them, but try to keep transfer sizes low
-	req.Header.Set("Accept-Encoding", "zstd,gzip,deflate,compress,br")
+	//req.Header.Set("Accept-Encoding", "zstd,gzip,deflate,compress,br")
 	if sc.lastDate != "" {
 		req.Header.Set("If-Modified-Since", ses.lastDate)
 	}
