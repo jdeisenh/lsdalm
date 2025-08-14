@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"math"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"strings"
@@ -17,32 +19,42 @@ import (
 type StreamLoader struct {
 	name string // Name, display only
 	//sourceUrl   *url.URL       // Manifest source URL
-	manifestDir string         // Subdirectory of above for manifests
-	userAgent   string         // Agent used in outgoing http
-	updateFreq  time.Duration  // Update freq for manifests
-	fetchqueue  chan *Session  // Buffered chan for fetch
-	done        chan struct{}  // Chan to stop background goroutines
-	ticker      *time.Ticker   // Ticker for timing manifest requests
-	fetchMode   FetchMode      // Media segment fetch mode: one of MODE_
-	logger      zerolog.Logger // Logger instance
-	client      *http.Client   // http Client
-	lastDate    string         // last Manifest fetch for comparison
-	sessions    []*Session     // All active Sessions
+	manifestDir     string         // Subdirectory of above for manifests
+	userAgent       string         // Agent used in outgoing http
+	updateFreq      time.Duration  // Update freq for manifests
+	fetchqueue      chan *Session  // Buffered chan for fetch
+	restartsPerHour float64        // Percentage (0-1) of sessions that restart per hour
+	done            chan struct{}  // Chan to stop background goroutines
+	ticker          *time.Ticker   // Ticker for timing manifest requests
+	fetchMode       FetchMode      // Media segment fetch mode: one of MODE_
+	logger          zerolog.Logger // Logger instance
+	client          *http.Client   // http Client
+	lastDate        string         // last Manifest fetch for comparison
+	sessions        []*Session     // All active Sessions
 }
 
 type Session struct {
-	sourceUrl *url.URL // Manifest Source, might change on redirect
-	lastDate  string   // last update
+	sourceUrl  *url.URL  // Manifest Source
+	sessionUrl *url.URL  // Session, if one was opened
+	startDate  time.Time // start of session
+	lastDate   string    // last update
 }
 
-func NewStreamLoader(name, source string, updateFreq time.Duration, logger zerolog.Logger, sessions int) (*StreamLoader, error) {
+// NewStreamLoader starts a new StreamLoader
+// with 'name' used for logging
+// on 'source' url
+// polling the stream every 'updateFreq'
+// keeping 'sessions' sessions open
+// restart 'restartsPerHour' percentage per Hour.
+func NewStreamLoader(name, source string, updateFreq time.Duration, logger zerolog.Logger, sessions int, restartsPerHour float64) (*StreamLoader, error) {
 
 	st := &StreamLoader{
-		name:       name,
-		updateFreq: updateFreq,
-		fetchqueue: make(chan *Session, 2*sessions),
-		logger:     logger.With().Str("channel", name).Logger(),
-		done:       make(chan struct{}),
+		name:            name,
+		updateFreq:      updateFreq,
+		restartsPerHour: restartsPerHour,
+		fetchqueue:      make(chan *Session, 2*sessions),
+		logger:          logger.With().Str("channel", name).Logger(),
+		done:            make(chan struct{}),
 		client: &http.Client{
 			Transport: &http.Transport{
 				MaxIdleConnsPerHost: 10000,
@@ -77,9 +89,15 @@ func NewSession(url *url.URL) *Session {
 // callback on all Segments
 func (sc *StreamLoader) fetchManifest(ses *Session) error {
 
-	req, err := http.NewRequest("GET", ses.sourceUrl.String(), nil)
+	surl := ses.sourceUrl
+	// Use SessionUrl if one exists
+	if ses.sessionUrl != nil {
+		surl = ses.sessionUrl
+	}
+
+	req, err := http.NewRequest("GET", surl.String(), nil)
 	if err != nil {
-		sc.logger.Warn().Err(err).Str("url", ses.sourceUrl.String()).Msg("Create Request")
+		sc.logger.Warn().Err(err).Str("url", surl.String()).Msg("Create Request")
 		// Handle error
 		return err
 	}
@@ -93,7 +111,7 @@ func (sc *StreamLoader) fetchManifest(ses *Session) error {
 
 	resp, err := sc.client.Do(req)
 	if err != nil {
-		sc.logger.Error().Err(err).Str("source", ses.sourceUrl.String()).Msg("Do Manifest Request")
+		sc.logger.Error().Err(err).Str("source", surl.String()).Msg("Do Manifest Request")
 		return err
 	}
 	if resp.Body != nil {
@@ -101,11 +119,11 @@ func (sc *StreamLoader) fetchManifest(ses *Session) error {
 	}
 	contents, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		sc.logger.Error().Err(err).Str("source", ses.sourceUrl.String()).Msg("Get Manifest data")
+		sc.logger.Error().Err(err).Str("source", surl.String()).Msg("Get Manifest data")
 		return err
 	}
 	if resp.StatusCode == http.StatusNotModified {
-		sc.logger.Debug().Str("url", ses.sourceUrl.String()).Msg("No update")
+		sc.logger.Debug().Str("url", surl.String()).Msg("No update")
 		return nil
 
 	}
@@ -113,6 +131,7 @@ func (sc *StreamLoader) fetchManifest(ses *Session) error {
 		sc.logger.Warn().Int("status", resp.StatusCode).Msg("Manifest fetch")
 		return errors.New("Not successful")
 	}
+	// If our sourced returns json, we assume it wants to open a session
 	if ct := resp.Header.Get("Content-Type"); strings.HasPrefix(ct, "application/json") || strings.HasPrefix(ct, "text/plain") {
 		var sessioninfo struct{ MediaUrl string }
 		err := json.Unmarshal(contents, &sessioninfo)
@@ -130,7 +149,8 @@ func (sc *StreamLoader) fetchManifest(ses *Session) error {
 			return err
 		}
 		sc.logger.Info().Str("url", sessioninfo.MediaUrl).Msg("Open session")
-		ses.sourceUrl = sessionUrl
+		ses.sessionUrl = sessionUrl
+		ses.startDate = time.Now()
 		// Call myself
 		return sc.fetchManifest(ses)
 
@@ -142,17 +162,6 @@ func (sc *StreamLoader) fetchManifest(ses *Session) error {
 
 	sc.lastDate = resp.Header.Get("Date")
 
-	/*
-		mpd := new(mpd.MPD)
-		err = mpd.Decode(contents)
-		if err != nil {
-			sc.logger.Error().Err(err).Msgf("Parse Manifest size %d", len(contents))
-			sc.logger.Debug().Msg(string(contents))
-			return err
-		}
-
-		err = sc.OnNewMpd(ses, mpd)
-	*/
 	return err
 
 }
@@ -166,9 +175,37 @@ func (sc *StreamLoader) OnNewMpd(ses *Session, mpde *mpd.MPD) error {
 	return nil
 }
 
+// closeSessions will determine how many sessions to close to make the rate, and execute it
+func (sc *StreamLoader) closeSessions() {
+
+	// Calculat the rate
+
+	killQuota := sc.restartsPerHour / 3600 * float64(sc.updateFreq) / float64(time.Second)
+	toKill := int(math.Round(float64(len(sc.sessions))*killQuota + rand.Float64() - 0.5)) // Add dithering
+	sc.logger.Debug().Msgf("Rate %f per sec, %f per iteration, %d sessions -> close %d",
+		sc.restartsPerHour/3600,
+		killQuota,
+		len(sc.sessions),
+		toKill,
+	)
+	// Rely on the random ordering of the iterator for random killing
+
+	for _, m := range sc.sessions {
+		if toKill == 0 {
+			break
+		}
+		toKill--
+		sc.CloseSession(m)
+	}
+
+}
+
 func (sc *StreamLoader) fetchAllManifest() error {
 	//now := time.Now()
 	sc.logger.Info().Msgf("Queue size %d", len(sc.fetchqueue))
+
+	sc.closeSessions()
+
 	for _, ses := range sc.sessions {
 		select {
 		case sc.fetchqueue <- ses:
@@ -221,4 +258,12 @@ func (sc *StreamLoader) fetcher() {
 	}
 	sc.logger.Debug().Msg("Close Fetcher")
 
+}
+
+func (sc *StreamLoader) CloseSession(ses *Session) {
+	if ses.sessionUrl == nil {
+		return
+	}
+	sc.logger.Info().Msgf("Closing session %s after %s", ses.sessionUrl, time.Since(ses.startDate))
+	ses.sessionUrl = nil
 }

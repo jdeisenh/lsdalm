@@ -23,6 +23,7 @@ func main() {
 
 	pollTime := flag.Duration("pollInterval", 5*time.Second, "Poll Interval in milliseconds")
 	timeLimit := flag.Duration("timelimit", 0, "Time limit")
+	restarts := flag.Float64("restarts", 0, "Avg restarts per hour per session")
 
 	flag.Parse()
 
@@ -37,7 +38,7 @@ func main() {
 	}
 	var err error
 
-	sg, err := lsdalm.NewStreamLoader(*name, *url, *pollTime, logger, *sessions)
+	sg, err := lsdalm.NewStreamLoader(*name, *url, *pollTime, logger, *sessions, *restarts)
 	if err != nil {
 		logger.Fatal().Err(err).Send()
 		return

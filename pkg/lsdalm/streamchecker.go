@@ -28,8 +28,8 @@ const (
 	dateShortFmt     = "15:04:05.00"                       // Used in logging dates
 	SchemeScteXml    = "urn:scte:scte35:2014:xml+bin"      // The one scte scheme we support right now
 	DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
-	maxTimeDiff      = time.Millisecond // What segment duration/offset we tolerate before warning (due to rounding errors)
-	cutSegmentsAt    = 5 * time.Minute  // Fetch only segments within this range of Now
+	maxTimeDiff      = 100 * time.Millisecond // What segment duration/offset we tolerate before warning (due to rounding errors)
+	cutSegmentsAt    = 5 * time.Minute        // Fetch only segments within this range of Now
 )
 
 // Modes support for checking media segments
