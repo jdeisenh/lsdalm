@@ -188,14 +188,19 @@ func (sc *StreamLoader) closeSessions() {
 		len(sc.sessions),
 		toKill,
 	)
-	// Rely on the random ordering of the iterator for random killing
+	if toKill == 0 {
+		return
+	}
 
-	for _, m := range sc.sessions {
+	// Randomize order
+	perm := rand.Perm(len(sc.sessions))
+
+	for _, i := range perm {
 		if toKill == 0 {
 			break
 		}
 		toKill--
-		sc.CloseSession(m)
+		sc.CloseSession(sc.sessions[i])
 	}
 
 }
