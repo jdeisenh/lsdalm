@@ -128,7 +128,7 @@ func (sc *StreamLoader) fetchManifest(ses *Session) error {
 
 	}
 	if resp.StatusCode != http.StatusOK {
-		sc.logger.Warn().Int("status", resp.StatusCode).Msg("Manifest fetch")
+		sc.logger.Warn().Int("status", resp.StatusCode).Str("url", surl.String()).Msg("Manifest fetch")
 		return errors.New("Not successful")
 	}
 	// If our sourced returns json, we assume it wants to open a session
@@ -152,7 +152,8 @@ func (sc *StreamLoader) fetchManifest(ses *Session) error {
 		ses.sessionUrl = sessionUrl
 		ses.startDate = time.Now()
 		// Call myself
-		return sc.fetchManifest(ses)
+		//return sc.fetchManifest(ses)
+		return nil
 
 	}
 	if resp.Header.Get("Date") == ses.lastDate {
