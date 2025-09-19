@@ -71,7 +71,7 @@ func NewStreamLoader(name, source string, updateFreq time.Duration, logger zerol
 	for i := 0; i < sessions; i++ {
 		st.sessions = append(st.sessions, NewSession(sourceUrl))
 	}
-	for w := 0; w < sessions/10; w++ {
+	for w := 0; w < min(sessions/10, 1); w++ {
 		go st.fetcher()
 	}
 
