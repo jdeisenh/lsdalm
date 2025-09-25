@@ -69,11 +69,12 @@ func NewStreamLoader(name, source string, updateFreq time.Duration, logger zerol
 	if err != nil {
 		return nil, err
 	}
-	for i := 0; i < sessions; i++ {
-		st.sessions = append(st.sessions, NewSession(sourceUrl, singleconn))
-	}
 	for w := 0; w < max(sessions/10, 1); w++ {
 		go st.fetcher()
+	}
+	for i := 0; i < sessions; i++ {
+		st.sessions = append(st.sessions, NewSession(sourceUrl, singleconn))
+		time.Sleep(10 * time.Millisecond) // 100Hz
 	}
 
 	return st, nil
