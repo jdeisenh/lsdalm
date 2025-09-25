@@ -34,10 +34,11 @@ type StreamLoader struct {
 }
 
 type Session struct {
-	sourceUrl  *url.URL  // Manifest Source
-	sessionUrl *url.URL  // Session, if one was opened
-	startDate  time.Time // start of session
-	lastDate   string    // last update
+	sourceUrl  *url.URL     // Manifest Source
+	sessionUrl *url.URL     // Session, if one was opened
+	startDate  time.Time    // start of session
+	lastDate   string       // last update
+	client     *http.Client // for maxconn tests
 }
 
 // NewStreamLoader starts a new StreamLoader
@@ -46,7 +47,7 @@ type Session struct {
 // polling the stream every 'updateFreq'
 // keeping 'sessions' sessions open
 // restart 'restartsPerHour' percentage per Hour.
-func NewStreamLoader(name, source string, updateFreq time.Duration, logger zerolog.Logger, sessions int, restartsPerHour float64) (*StreamLoader, error) {
+func NewStreamLoader(name, source string, updateFreq time.Duration, logger zerolog.Logger, sessions int, restartsPerHour float64, singleconn bool) (*StreamLoader, error) {
 
 	st := &StreamLoader{
 		name:            name,
@@ -69,7 +70,7 @@ func NewStreamLoader(name, source string, updateFreq time.Duration, logger zerol
 		return nil, err
 	}
 	for i := 0; i < sessions; i++ {
-		st.sessions = append(st.sessions, NewSession(sourceUrl))
+		st.sessions = append(st.sessions, NewSession(sourceUrl, singleconn))
 	}
 	for w := 0; w < max(sessions/10, 1); w++ {
 		go st.fetcher()
@@ -78,9 +79,13 @@ func NewStreamLoader(name, source string, updateFreq time.Duration, logger zerol
 	return st, nil
 }
 
-func NewSession(url *url.URL) *Session {
+func NewSession(url *url.URL, singleconnection bool) *Session {
 	ses := &Session{
 		sourceUrl: url,
+	}
+	// Give each session its own transport if selected
+	if singleconnection {
+		ses.client = &http.Client{Transport: &http.Transport{}}
 	}
 	return ses
 }
@@ -109,7 +114,12 @@ func (sc *StreamLoader) fetchManifest(ses *Session) error {
 		req.Header.Set("If-Modified-Since", ses.lastDate)
 	}
 
-	resp, err := sc.client.Do(req)
+	client := sc.client
+	if ses.client != nil {
+		client = ses.client
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		sc.logger.Error().Err(err).Str("source", surl.String()).Msg("Do Manifest Request")
 		return err
