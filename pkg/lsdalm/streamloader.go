@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jdeisenh/lsdalm/pkg/go-mpd"
@@ -30,7 +31,11 @@ type StreamLoader struct {
 	logger          zerolog.Logger // Logger instance
 	client          *http.Client   // http Client
 	lastDate        string         // last Manifest fetch for comparison
+	numSessions     int            // number of sessions to start
+	sessionMutex    sync.RWMutex   // protects session
 	sessions        []*Session     // All active Sessions
+	singleconn      bool
+	sourceUrl       *url.URL
 }
 
 type Session struct {
@@ -47,13 +52,13 @@ type Session struct {
 // polling the stream every 'updateFreq'
 // keeping 'sessions' sessions open
 // restart 'restartsPerHour' percentage per Hour.
-func NewStreamLoader(name, source string, updateFreq time.Duration, logger zerolog.Logger, sessions int, restartsPerHour float64, singleconn bool) (*StreamLoader, error) {
+func NewStreamLoader(name, source string, updateFreq time.Duration, logger zerolog.Logger, numSessions int, restartsPerHour float64, singleconn bool) (*StreamLoader, error) {
 
 	st := &StreamLoader{
 		name:            name,
 		updateFreq:      updateFreq,
 		restartsPerHour: restartsPerHour,
-		fetchqueue:      make(chan *Session, 2*sessions),
+		fetchqueue:      make(chan *Session, 2*numSessions),
 		logger:          logger.With().Str("channel", name).Logger(),
 		done:            make(chan struct{}),
 		client: &http.Client{
@@ -61,23 +66,30 @@ func NewStreamLoader(name, source string, updateFreq time.Duration, logger zerol
 				MaxIdleConnsPerHost: 10000,
 			},
 		},
-		userAgent: DefaultUserAgent,
-		sessions:  make([]*Session, 0, sessions),
+		userAgent:   DefaultUserAgent,
+		sessions:    make([]*Session, 0, numSessions),
+		singleconn:  singleconn,
+		numSessions: numSessions,
 	}
 	var err error
-	sourceUrl, err := url.Parse(source)
+	st.sourceUrl, err = url.Parse(source)
 	if err != nil {
 		return nil, err
 	}
-	for w := 0; w < max(sessions/10, 1); w++ {
+	for w := 0; w < max(numSessions/10, 1); w++ {
 		go st.fetcher()
 	}
-	for i := 0; i < sessions; i++ {
-		st.sessions = append(st.sessions, NewSession(sourceUrl, singleconn))
-		time.Sleep(10 * time.Millisecond) // 100Hz
-	}
-
+	go st.AddLoad()
 	return st, nil
+}
+
+func (sl *StreamLoader) AddLoad() {
+	for i := 0; i < sl.numSessions; i++ {
+		sl.sessionMutex.Lock()
+		sl.sessions = append(sl.sessions, NewSession(sl.sourceUrl, sl.singleconn))
+		sl.sessionMutex.Unlock()
+		time.Sleep(10 * time.Millisecond) // 100 Hz
+	}
 }
 
 func NewSession(url *url.URL, singleconnection bool) *Session {
@@ -205,8 +217,9 @@ func (sc *StreamLoader) closeSessions() {
 	}
 
 	// Randomize order
+	sc.sessionMutex.RLock()
 	perm := rand.Perm(len(sc.sessions))
-
+	defer sc.sessionMutex.RUnlock()
 	for _, i := range perm {
 		if toKill == 0 {
 			break
@@ -223,6 +236,8 @@ func (sc *StreamLoader) fetchAllManifest() error {
 
 	sc.closeSessions()
 
+	sc.sessionMutex.RLock()
+	defer sc.sessionMutex.RUnlock()
 	for _, ses := range sc.sessions {
 		select {
 		case sc.fetchqueue <- ses:
