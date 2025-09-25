@@ -20,6 +20,7 @@ import (
 
 const (
 	requestTimeout = 5 * time.Second
+	dialTimeout    = 1 * time.Second
 )
 
 type StreamLoader struct {
@@ -67,13 +68,11 @@ func NewStreamLoader(name, source string, updateFreq time.Duration, logger zerol
 		logger:          logger.With().Str("channel", name).Logger(),
 		done:            make(chan struct{}),
 		client: &http.Client{
+			Timeout: requestTimeout,
 			Transport: &http.Transport{
 				MaxIdleConnsPerHost: 10000,
-				Timeout:             requestTimeout,
-				Transport: &http.Transport{
-					Dial: func(network, addr string) (net.Conn, error) {
-						return net.DialTimeout(network, addr, dialTimeout)
-					},
+				Dial: func(network, addr string) (net.Conn, error) {
+					return net.DialTimeout(network, addr, dialTimeout)
 				},
 			},
 		},
