@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"math"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -15,6 +16,10 @@ import (
 
 	"github.com/jdeisenh/lsdalm/pkg/go-mpd"
 	"github.com/rs/zerolog"
+)
+
+const (
+	requestTimeout = 5 * time.Second
 )
 
 type StreamLoader struct {
@@ -64,6 +69,12 @@ func NewStreamLoader(name, source string, updateFreq time.Duration, logger zerol
 		client: &http.Client{
 			Transport: &http.Transport{
 				MaxIdleConnsPerHost: 10000,
+				Timeout:             requestTimeout,
+				Transport: &http.Transport{
+					Dial: func(network, addr string) (net.Conn, error) {
+						return net.DialTimeout(network, addr, dialTimeout)
+					},
+				},
 			},
 		},
 		userAgent:   DefaultUserAgent,
