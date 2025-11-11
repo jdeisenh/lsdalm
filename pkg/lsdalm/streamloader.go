@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	requestTimeout = 5 * time.Second
-	dialTimeout    = 1 * time.Second
+	dialTimeout = 1 * time.Second
+	maxErrors   = 2 // Number of errors before we restart the session
 )
 
 type StreamLoader struct {
@@ -45,11 +45,12 @@ type StreamLoader struct {
 }
 
 type Session struct {
-	sourceUrl  *url.URL     // Manifest Source
-	sessionUrl *url.URL     // Session, if one was opened
-	startDate  time.Time    // start of session
-	lastDate   string       // last update
-	client     *http.Client // for maxconn tests
+	sourceUrl    *url.URL     // Manifest Source
+	sessionUrl   *url.URL     // Session, if one was opened
+	startDate    time.Time    // start of session
+	lastDate     string       // last update
+	client       *http.Client // for maxconn tests
+	errorCounter int          // Number of errors accumlated
 }
 
 // NewStreamLoader starts a new StreamLoader
@@ -58,7 +59,7 @@ type Session struct {
 // polling the stream every 'updateFreq'
 // keeping 'sessions' sessions open
 // restart 'restartsPerHour' percentage per Hour.
-func NewStreamLoader(name, source string, updateFreq time.Duration, logger zerolog.Logger, numSessions int, restartsPerHour float64, singleconn bool) (*StreamLoader, error) {
+func NewStreamLoader(name, source string, updateFreq time.Duration, logger zerolog.Logger, numSessions int, restartsPerHour float64, singleconn bool, requestTimeout time.Duration) (*StreamLoader, error) {
 
 	st := &StreamLoader{
 		name:            name,
@@ -181,10 +182,14 @@ func (sc *StreamLoader) fetchManifest(ses *Session) error {
 			sc.logger.Error().Err(err).Msg("Session Url not parsable")
 			return err
 		}
+
+		// HAck
+		sessionUrl, _ = url.Parse(strings.Replace(sessionUrl.String(), "poseidon.", "vai-4197-complete.", 1))
 		sc.logger.Info().Str("url", sessioninfo.MediaUrl).Msg("Open session")
 		ses.sessionUrl = sessionUrl
 		ses.startDate = time.Now()
 		// Call myself
+		// For immediate manifest fetch
 		//return sc.fetchManifest(ses)
 		return nil
 
@@ -296,7 +301,14 @@ func (sc *StreamLoader) fetcher() {
 			// Exit signal
 			break
 		}
-		sc.fetchManifest(ses)
+		if sc.fetchManifest(ses) != nil {
+			ses.errorCounter++
+		} else {
+			ses.errorCounter = 0
+		}
+		if ses.errorCounter > maxErrors {
+			sc.CloseSession(ses)
+		}
 	}
 	sc.logger.Debug().Msg("Close Fetcher")
 
@@ -306,6 +318,7 @@ func (sc *StreamLoader) CloseSession(ses *Session) {
 	if ses.sessionUrl == nil {
 		return
 	}
-	sc.logger.Info().Msgf("Closing session %s after %s", ses.sessionUrl, time.Since(ses.startDate))
+	sc.logger.Info().Str("session", ses.sessionUrl.String()).Msgf("Closing session after %s", time.Since(ses.startDate))
 	ses.sessionUrl = nil
+	ses.errorCounter = 0
 }

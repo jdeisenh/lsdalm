@@ -25,6 +25,7 @@ func main() {
 	timeLimit := flag.Duration("timelimit", 0, "Time limit")
 	restarts := flag.Float64("restarts", 0, "Avg restarts per hour per session")
 	singleconn := flag.Bool("maxconn", false, "Use one TCP connection per session")
+	requestTimeout := flag.Duration("requestTimeout", 1*time.Second, "Timeout for single request")
 
 	flag.Parse()
 
@@ -39,7 +40,7 @@ func main() {
 	}
 	var err error
 
-	sg, err := lsdalm.NewStreamLoader(*name, *url, *pollTime, logger, *sessions, *restarts, *singleconn)
+	sg, err := lsdalm.NewStreamLoader(*name, *url, *pollTime, logger, *sessions, *restarts, *singleconn, *requestTimeout)
 	if err != nil {
 		logger.Fatal().Err(err).Send()
 		return
