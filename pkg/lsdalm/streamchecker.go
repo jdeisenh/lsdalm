@@ -69,6 +69,7 @@ type StreamChecker struct {
 	upcomingSplices SpliceList                // SCTE-Markers announced
 	lastDate        string                    // date of last http fetch (from header)
 	mpdDiffer       *MpdDiffer                // compare new to last mpd and trigger events
+	lastNewMpd      time.Time                 // time of last update of mpd
 }
 
 func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, fetchMode FetchMode, logger zerolog.Logger, workers int) (*StreamChecker, error) {
@@ -168,10 +169,10 @@ func (sc *StreamChecker) checkPeriodBorders(mpde *mpd.MPD, period *mpd.Period, p
 	// Find start
 	firstOfNext, _ := PeriodSegmentLimits(lp, ast)
 	gapFromPrevious, gapToNext := periodStart.Sub(lastOfPrevious), firstOfNext.Sub(periodStart)
+
 	if gapFromPrevious > 10*time.Millisecond || gapToNext > 10*time.Millisecond {
 		sc.logger.Warn().Msgf("Period %s gap from old %s to new %s", EmptyIfNil(period.ID), gapFromPrevious, gapToNext)
-	} else {
-
+	} else if gapFromPrevious > 1*time.Millsecond || gapToNext > 1*time.Millisecond {
 		sc.logger.Info().Msgf("Period %s gap from old %s to new %s", EmptyIfNil(period.ID), gapFromPrevious, gapToNext)
 	}
 }
@@ -493,6 +494,14 @@ func (sc *StreamChecker) fetchAndStoreManifest() error {
 // OnNewMpd is called when a new MPD is published
 // (that is different)
 func (sc *StreamChecker) OnNewMpd(mpde *mpd.MPD) error {
+
+	if !sc.lastNewMpd.IsZero() {
+		diff := time.Since(sc.lastNewMpd)
+		if diff > 10*time.Second {
+			sc.logger.Warn().Msgf("No update since %s", diff)
+		}
+	}
+	sc.lastNewMpd = time.Now()
 
 	if err := sc.mpdDiffer.Update(mpde); err != nil {
 		return err
