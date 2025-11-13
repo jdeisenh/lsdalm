@@ -172,7 +172,7 @@ func (sc *StreamChecker) checkPeriodBorders(mpde *mpd.MPD, period *mpd.Period, p
 
 	if gapFromPrevious > 10*time.Millisecond || gapToNext > 10*time.Millisecond {
 		sc.logger.Warn().Msgf("Period %s gap from old %s to new %s", EmptyIfNil(period.ID), gapFromPrevious, gapToNext)
-	} else if gapFromPrevious > 1*time.Millsecond || gapToNext > 1*time.Millisecond {
+	} else if gapFromPrevious > 1*time.Millisecond || gapToNext > 1*time.Millisecond {
 		sc.logger.Info().Msgf("Period %s gap from old %s to new %s", EmptyIfNil(period.ID), gapFromPrevious, gapToNext)
 	}
 }
