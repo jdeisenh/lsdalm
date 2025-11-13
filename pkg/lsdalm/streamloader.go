@@ -183,8 +183,6 @@ func (sc *StreamLoader) fetchManifest(ses *Session) error {
 			return err
 		}
 
-		// HAck
-		sessionUrl, _ = url.Parse(strings.Replace(sessionUrl.String(), "poseidon.", "vai-4197-complete.", 1))
 		sc.logger.Info().Str("url", sessioninfo.MediaUrl).Msg("Open session")
 		ses.sessionUrl = sessionUrl
 		ses.startDate = time.Now()
