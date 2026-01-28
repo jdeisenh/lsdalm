@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - master
+      - publish-docker-images
     tags:
       - 'v*'
   pull_request:
