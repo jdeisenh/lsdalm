@@ -168,6 +168,8 @@ func (sc *StreamLooper) BuildMpd(ptsShift time.Duration, id string, periodStart,
 	for _, ev := range sc.recording.EventStreamMap {
 		// Append all for all ranges: Todo: map offset, duration
 		evs := Copy(ev)
+		evs.Event = make([]mpd.Event, len(ev.Event))
+		copy(evs.Event, ev.Event)
 		pto := uint64(ZeroIfNil(ev.PresentationTimeOffset))
 		timescale := ZeroIfNil(ev.Timescale)
 		pto = uint64(int64(pto) + Duration2TLP(effectivePtsShift, timescale))
@@ -187,6 +189,7 @@ func (sc *StreamLooper) BuildMpd(ptsShift time.Duration, id string, periodStart,
 				continue
 			}
 			sc.logger.Debug().Msgf("Add Event %s %d at %s-%s", EmptyIfNil(evs.SchemeIdUri), e.Id, shortT(ts), shortT(ts.Add(d)))
+
 			fel = append(fel, e)
 
 		}
@@ -206,6 +209,14 @@ func (sc *StreamLooper) BuildMpd(ptsShift time.Duration, id string, periodStart,
 func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Duration) ([]byte, error) {
 
 	offset, timeShift, loopLength, startOfRecording := sc.recording.getLoopMeta(at, now)
+
+	if false {
+		// Example on how to replay a part of the DVR window
+		loopLength = 60 * time.Minute
+		startOfRecording, _ = time.Parse(time.RFC3339, "2026-02-05T11:00:00+01:00")
+		offset = time.Duration(time.Now().Unix()%3600) * time.Second
+		timeShift = time.Now().Sub(startOfRecording) / time.Hour * time.Hour
+	}
 	sc.logger.Info().Msgf("Offset: %6s TimeShift: %s LoopDuration: %s OrgStart:%s OrgPosition %s",
 		RoundToS(offset), RoundToS(timeShift), RoundToS(loopLength), shortT(startOfRecording), shortT(startOfRecording.Add(offset)))
 

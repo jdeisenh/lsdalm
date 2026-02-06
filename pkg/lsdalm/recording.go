@@ -197,9 +197,11 @@ func (re *Recording) AddMpdToHistory(mpde *mpd.MPD) error {
 						continue inloop
 					}
 				}
-				//logger.Info().Msgf("Add Events %s: %d@%d", sId, in.Id, in.PresentationTime)
+				//log.Info().Msgf("Add Events %s: %d@%d", sId, in.Id, in.PresentationTime)
 				// Append Events if not there
-				in.Content = "" // Clean up cruft
+				if EmptyIfNil(ev.SchemeIdUri) == SchemeScteXml {
+					in.Content = "" // Clean up cruft
+				}
 				have.Event = append(have.Event, in)
 			}
 
