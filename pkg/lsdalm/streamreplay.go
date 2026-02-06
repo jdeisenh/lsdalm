@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jdeisenh/lsdalm/pkg/go-mpd"
+	"github.com/jdeisenh/lsdalm/pkg/go-xsd-types"
 	"github.com/rs/zerolog"
 )
 
@@ -230,6 +231,9 @@ func (sc *StreamReplay) GetLooped(at, now time.Time, requestDuration time.Durati
 	sc.AdjustMpd(mpdCurrent, shift, sc.storageMeta.HaveMedia) // Manipulate
 
 	//sc.logger.Info().Msgf("Move period: %s", startOfRecording.Add(shift))
+	// Upate Publish time
+	publishTime := xsd.DateTime(time.Now().UTC())
+	mpdCurrent.PublishTime = &publishTime
 
 	// re-encode
 	afterEncode, err := mpdCurrent.Encode()

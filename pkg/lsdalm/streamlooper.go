@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jdeisenh/lsdalm/pkg/go-mpd"
+	"github.com/jdeisenh/lsdalm/pkg/go-xsd-types"
 	"github.com/rs/zerolog"
 )
 
@@ -268,6 +269,8 @@ func (sc *StreamLooper) GetLooped(at, now time.Time, requestDuration time.Durati
 		)
 	}
 	mpdCurrent = ReBaseMpd(mpdCurrent, sc.originalBaseUrl, sc.storageMeta.HaveMedia)
+	publishTime := xsd.DateTime(time.Now().UTC())
+	mpdCurrent.PublishTime = &publishTime
 	// re-encode
 	afterEncode, err := mpdCurrent.Encode()
 	if err != nil {
