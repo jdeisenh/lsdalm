@@ -25,6 +25,7 @@ func main() {
 	verifyMedia := flag.Bool("verifymedia", false, "Verify all Media segments")
 	storeMedia := flag.Bool("storemedia", false, "Store all Media segments")
 	workers := flag.Int("workers", 1, "Number of parallel downloads")
+	nodate := flag.Bool("nodate", false, "Do not append date to storage directory name")
 	listen := flag.String("replayport", "", "socket:Port for timeshift replay server (e.g. :8080)")
 
 	pollTime := flag.Duration("pollInterval", 5*time.Second, "Poll Interval in milliseconds")
@@ -53,7 +54,7 @@ func main() {
 	case *accessMedia:
 		mode = lsdalm.MODE_ACCESS
 	}
-	sg, err := lsdalm.NewStreamChecker(*name, *url, *dir, *pollTime, mode, logger, *workers)
+	sg, err := lsdalm.NewStreamChecker(*name, *url, *dir, *pollTime, mode, logger, *workers, *nodate)
 	if err != nil {
 		logger.Fatal().Err(err).Send()
 		return

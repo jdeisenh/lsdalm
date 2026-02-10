@@ -72,7 +72,7 @@ type StreamChecker struct {
 	lastNewMpd      time.Time                 // time of last update of mpd
 }
 
-func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, fetchMode FetchMode, logger zerolog.Logger, workers int) (*StreamChecker, error) {
+func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, fetchMode FetchMode, logger zerolog.Logger, workers int, nodate bool) (*StreamChecker, error) {
 
 	st := &StreamChecker{
 		name:       name,
@@ -93,14 +93,21 @@ func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, f
 	if err != nil {
 		return nil, err
 	}
-	// Create a storage directory from dumpdir, name, date and version
+	// Create a storage directory from dumpdir, name, and optionally date and version
 	var dumpdir string
 	if dumpbase != "" {
-		version := ""
-		for versioncount := 0; versioncount < 20; versioncount++ {
-			dumpdir = path.Join(dumpbase, name+"-"+time.Now().Format("2006-01-02")+version)
-			if _, e := os.Stat(dumpdir); e != nil {
-				break
+		if nodate {
+			dumpdir = path.Join(dumpbase, name)
+		} else {
+			version := ""
+			for versioncount := 0; versioncount < 20; versioncount++ {
+				dumpdir = path.Join(dumpbase, name+"-"+time.Now().Format("2006-01-02")+version)
+				if _, e := os.Stat(dumpdir); e != nil {
+					break
+				}
+				logger.Debug().Msgf("Directory %s exists", dumpdir)
+				dumpdir = ""
+				version = fmt.Sprintf(".%d", versioncount+1)
 			}
 			logger.Debug().Msgf("Directory %s exists", dumpdir)
 			dumpdir = ""
