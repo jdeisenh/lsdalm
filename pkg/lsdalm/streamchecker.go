@@ -70,9 +70,20 @@ type StreamChecker struct {
 	lastDate        string                    // date of last http fetch (from header)
 	mpdDiffer       *MpdDiffer                // compare new to last mpd and trigger events
 	lastNewMpd      time.Time                 // time of last update of mpd
+	checkerLog      checkerLogger             // logging strategy (text or json)
 }
 
-func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, fetchMode FetchMode, logger zerolog.Logger, workers int, nodate bool) (*StreamChecker, error) {
+// checkerLogger abstracts text vs JSON logging
+type checkerLogger interface {
+	LogNewPeriod(periodId string, starts time.Time)
+	LogNewEvent(scheme string, eventId uint64, at time.Time, duration time.Duration)
+	LogPeriodGap(periodId string, gapFromPrevious, gapToNext time.Duration)
+	LogTrackAlignmentOffset(offsetDiff float64, adaptationSet, periodId string)
+	LogNoUpdate(since time.Duration)
+	LogManifest(m *ManifestLog)
+}
+
+func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, fetchMode FetchMode, logger zerolog.Logger, workers int, nodate, jsonMode bool) (*StreamChecker, error) {
 
 	st := &StreamChecker{
 		name:       name,
@@ -87,6 +98,11 @@ func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, f
 		haveMap:   make(map[string]bool),
 		userAgent: DefaultUserAgent,
 		mpdDiffer: NewMpdDiffer(logger),
+	}
+	if jsonMode {
+		st.checkerLog = &jsonCheckerLogger{logger: st.logger}
+	} else {
+		st.checkerLog = &textCheckerLogger{logger: st.logger}
 	}
 	var err error
 	st.sourceUrl, err = url.Parse(source)
@@ -109,9 +125,6 @@ func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, f
 				dumpdir = ""
 				version = fmt.Sprintf(".%d", versioncount+1)
 			}
-			logger.Debug().Msgf("Directory %s exists", dumpdir)
-			dumpdir = ""
-			version = fmt.Sprintf(".%d", versioncount+1)
 		}
 	}
 	st.dumpdir = dumpdir
@@ -148,13 +161,13 @@ func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, f
 
 	st.mpdDiffer.AddOnNewPeriod(func(mpde *mpd.MPD, period *mpd.Period) {
 		periodStart := st.mpdDiffer.ast.Add(PeriodStart(period))
-		logger.Info().Msgf("New Period %s starts %s", EmptyIfNil(period.ID), periodStart)
+		st.checkerLog.LogNewPeriod(EmptyIfNil(period.ID), periodStart)
 		st.checkPeriodBorders(mpde, period, periodStart)
 		st.checkTrackAlignment(period)
 	})
 
 	st.mpdDiffer.AddOnNewEvent(func(event *mpd.Event, scheme string, at time.Time, duration time.Duration) {
-		logger.Info().Msgf("New Event %s:%d at %s Duration %s", scheme, event.Id, at, duration)
+		st.checkerLog.LogNewEvent(scheme, event.Id, at, duration)
 	})
 
 	return st, nil
@@ -177,11 +190,7 @@ func (sc *StreamChecker) checkPeriodBorders(mpde *mpd.MPD, period *mpd.Period, p
 	firstOfNext, _ := PeriodSegmentLimits(lp, ast)
 	gapFromPrevious, gapToNext := periodStart.Sub(lastOfPrevious), firstOfNext.Sub(periodStart)
 
-	if gapFromPrevious > 10*time.Millisecond || gapToNext > 10*time.Millisecond {
-		sc.logger.Warn().Msgf("Period %s gap from old %s to new %s", EmptyIfNil(period.ID), gapFromPrevious, gapToNext)
-	} else if gapFromPrevious > 1*time.Millisecond || gapToNext > 1*time.Millisecond {
-		sc.logger.Info().Msgf("Period %s gap from old %s to new %s", EmptyIfNil(period.ID), gapFromPrevious, gapToNext)
-	}
+	sc.checkerLog.LogPeriodGap(EmptyIfNil(period.ID), gapFromPrevious, gapToNext)
 }
 
 func (sc *StreamChecker) checkTrackAlignment(period *mpd.Period) {
@@ -198,7 +207,7 @@ func (sc *StreamChecker) checkTrackAlignment(period *mpd.Period) {
 		offset := float64(pto) / float64(timescale)
 
 		if oldOffset != 0 && math.Abs(offset-oldOffset) > 0.002 {
-			sc.logger.Warn().Msgf("Offset difference of %g s found in AS %s of period %s", math.Round((offset-oldOffset)*1000)/1000, EmptyIfNil(as.Id), EmptyIfNil(period.ID))
+			sc.checkerLog.LogTrackAlignmentOffset(math.Round((offset-oldOffset)*1000)/1000, EmptyIfNil(as.Id), EmptyIfNil(period.ID))
 		}
 		oldOffset = offset
 	}
@@ -505,7 +514,7 @@ func (sc *StreamChecker) OnNewMpd(mpde *mpd.MPD) error {
 	if !sc.lastNewMpd.IsZero() {
 		diff := time.Since(sc.lastNewMpd)
 		if diff > 10*time.Second {
-			sc.logger.Warn().Msgf("No update since %s", diff)
+			sc.checkerLog.LogNoUpdate(diff)
 		}
 	}
 	sc.lastNewMpd = time.Now()
@@ -584,25 +593,40 @@ func (sc *StreamChecker) walkMpd(mpde *mpd.MPD) error {
 	if sc.initialPeriod == nil {
 		return fmt.Errorf("No initial period found")
 	}
+	// Build manifest log struct
+	ml := &ManifestLog{
+		Periods: make([]PeriodInfo, 0, len(mpde.Period)),
+		Tracks:  make([]TrackLog, 0, len(sc.initialPeriod.AdaptationSets)),
+	}
+	for _, period := range mpde.Period {
+		periodStart := ast.Add(PeriodStart(period))
+		ml.Periods = append(ml.Periods, PeriodInfo{
+			ID:    EmptyIfNil(period.ID),
+			Start: shortT(periodStart),
+		})
+	}
+
 	// Walk all AdaptationSets, Periods, and Representations
 	// To have one AdaptationSet on one line for all Periods,
 	// we use the list of Adaptations from the reference Period
 	// and try to match all others to that
-	var theGap time.Time
 ASloop:
 	for asRefId, asRef := range sc.initialPeriod.AdaptationSets {
-		msg := ""
+		track := TrackLog{
+			MimeType: asRef.MimeType,
+			Codecs:   EmptyIfNil(asRef.Codecs),
+			Periods:  make([]TrackPeriodLog, 0, len(mpde.Period)),
+		}
+		var prevTo time.Time
 		for periodIdx, period := range mpde.Period {
-			// Find the adaptationset matching the reference adaptationset
 			if len(period.AdaptationSets) == 0 {
 				continue
 			}
 			sc.logger.Trace().Msgf("Searching %s/%s in period %d ", asRef.MimeType, EmptyIfNil(asRef.Codecs), periodIdx)
 			// Find an AdaptationSet that matches the AS in the reference period
-			// Default is first if not found
+			// This logic is incomplete. If the codec is in the representation, it should match it instead of mismatching to the wrong track
 			var as *mpd.AdaptationSet
 			for asfi, asfinder := range period.AdaptationSets {
-				// This logic is imcomplete. If the codec is in the representation, it should match it instead of mismatching to the wrong track
 				if asRef.MimeType == asfinder.MimeType && (asRef.Codecs == nil || asfinder.Codecs == nil || *asRef.Codecs == *asfinder.Codecs) {
 					sc.logger.Trace().Msgf("Mime-Type %s/%s found in p %d asi %d", asfinder.MimeType, EmptyIfNil(asfinder.Codecs), periodIdx, asfi)
 					as = asfinder
@@ -611,65 +635,75 @@ ASloop:
 			}
 			if as == nil {
 				sc.logger.Debug().Msgf("Mime-Type %s not found in asi %d", asRef.MimeType, asRefId)
-				msg += " [missing] "
-
-			} else {
-				segTemp := as.SegmentTemplate
-				if segTemp == nil && len(as.Representations) > 0 {
-					// Use the first SegTemplate of the Representation
-					segTemp = as.Representations[0].SegmentTemplate
-				}
-
-				// If there is no segmentTimeline, skip it
-				if segTemp == nil || segTemp.SegmentTimeline == nil || len(segTemp.SegmentTimeline.S) == 0 {
-					continue ASloop
-				}
-				periodStart := ast.Add(PeriodStart(period))
-				from, to := SumSegmentTemplate(segTemp, periodStart)
-				if from.IsZero() {
-					for _, pres := range as.Representations {
-						if pres.SegmentTemplate != nil {
-							from, to = SumSegmentTemplate(pres.SegmentTemplate, periodStart)
-							break
-						}
-					}
-				}
-				for _, sp := range sc.upcomingSplices.InRange(from, to) {
-					//sc.logger.Info().Msgf("Found splice at %s", shortT(sp))
-					WalkSegmentTemplateTimings(segTemp, periodStart, func(t time.Time, d time.Duration) {
-						if !sp.At.Before(t) && sp.At.Before(t.Add(d)) {
-							offset := sp.At.Sub(t)
-							if offset > d/2 {
-								sc.logger.Debug().Msgf("Early %s to %s Len %s", RoundTo(d-offset, time.Millisecond), shortT(t.Add(d)), d)
-							} else if offset != 0 {
-								sc.logger.Debug().Msgf("Late  %s to %s Len %s", RoundTo(offset, time.Millisecond), shortT(t), d)
-							} else {
-								sc.logger.Debug().Msgf("Exactly at %s Len %s", shortT(t), d)
-							}
-						}
-					})
-				}
-				if periodIdx == 0 {
-					// Line start: mimetype+codec, timeshiftBufferDepth
-					codecs := ""
-					if asRef.Codecs != nil {
-						codecs = "/" + *asRef.Codecs
-					}
-					msg = fmt.Sprintf("%30s: %8s", asRef.MimeType+codecs, RoundTo(now.Sub(from), time.Second))
-				} else if gap := from.Sub(theGap); gap > maxGapLog {
-					msg += fmt.Sprintf("GAP: %s", Round(gap))
-				}
-
-				msg += fmt.Sprintf(" %s(%8s)%s", "" /*from.Format(dateShortFmt)*/, Round(to.Sub(from)), "" /*to.Format(dateShortFmt)*/)
-
-				if periodIdx == len(mpde.Period)-1 {
-					msg += fmt.Sprintf(" %.1fs", float64(now.Sub(to)/(time.Second/10))/10.0) // Live edge distance
-				}
-				theGap = to
+				track.Periods = append(track.Periods, TrackPeriodLog{Missing: true})
+				continue
 			}
+
+			segTemp := as.SegmentTemplate
+			if segTemp == nil && len(as.Representations) > 0 {
+				// Use the first SegTemplate of the Representation
+				segTemp = as.Representations[0].SegmentTemplate
+			}
+			// If there is no segmentTimeline, skip it
+			if segTemp == nil || segTemp.SegmentTimeline == nil || len(segTemp.SegmentTimeline.S) == 0 {
+				continue ASloop
+			}
+
+			periodStart := ast.Add(PeriodStart(period))
+			from, to := SumSegmentTemplate(segTemp, periodStart)
+			if from.IsZero() {
+				for _, pres := range as.Representations {
+					if pres.SegmentTemplate != nil {
+						from, to = SumSegmentTemplate(pres.SegmentTemplate, periodStart)
+						break
+					}
+				}
+			}
+
+			pt := TrackPeriodLog{
+				Duration: Duration(Round(to.Sub(from))),
+			}
+
+			if !prevTo.IsZero() {
+				if gap := from.Sub(prevTo); gap > maxGapLog {
+					pt.Gap = Duration(Round(gap))
+				}
+			}
+
+			for _, sp := range sc.upcomingSplices.InRange(from, to) {
+				WalkSegmentTemplateTimings(segTemp, periodStart, func(t time.Time, d time.Duration) {
+					if !sp.At.Before(t) && sp.At.Before(t.Add(d)) {
+						offset := sp.At.Sub(t)
+						sl := SpliceLog{SegDuration: Duration(d), SegBoundary: shortT(t)}
+						if offset > d/2 {
+							sl.Direction = "early"
+							sl.Offset = Duration(RoundTo(d-offset, time.Millisecond))
+							sl.SegBoundary = shortT(t.Add(d))
+						} else if offset != 0 {
+							sl.Direction = "late"
+							sl.Offset = Duration(RoundTo(offset, time.Millisecond))
+						} else {
+							sl.Direction = "exact"
+						}
+						pt.Splices = append(pt.Splices, sl)
+					}
+				})
+			}
+
+			if periodIdx == 0 {
+				track.BufferDepth = Duration(RoundTo(now.Sub(from), time.Second))
+			}
+			if periodIdx == len(mpde.Period)-1 {
+				track.LiveEdge = Duration(now.Sub(to))
+			}
+
+			prevTo = to
+			track.Periods = append(track.Periods, pt)
 		}
-		sc.logger.Info().Msg(msg) // Write the assembled status line
+		ml.Tracks = append(ml.Tracks, track)
 	}
+
+	sc.checkerLog.LogManifest(ml)
 	return nil
 }
 
