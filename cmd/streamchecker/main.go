@@ -12,11 +12,6 @@ import (
 
 func main() {
 
-	logger := zerolog.New(zerolog.ConsoleWriter{
-		Out:        os.Stderr,
-		TimeFormat: time.TimeOnly,
-	}).With().Timestamp().Logger()
-
 	url := flag.String("url", "", "Channel URL")
 	name := flag.String("name", "default", "Channel ID")
 	debug := flag.Bool("debug", false, "set log level to debug")
@@ -25,12 +20,24 @@ func main() {
 	verifyMedia := flag.Bool("verifymedia", false, "Verify all Media segments")
 	storeMedia := flag.Bool("storemedia", false, "Store all Media segments")
 	workers := flag.Int("workers", 1, "Number of parallel downloads")
+	nodate := flag.Bool("nodate", false, "Do not append date to storage directory name")
 	listen := flag.String("replayport", "", "socket:Port for timeshift replay server (e.g. :8080)")
+	jsonLog := flag.Bool("json", false, "JSON logging output")
 
 	pollTime := flag.Duration("pollInterval", 5*time.Second, "Poll Interval in milliseconds")
 	timeLimit := flag.Duration("timelimit", 0, "Time limit")
 
 	flag.Parse()
+
+	var logger zerolog.Logger
+	if *jsonLog {
+		logger = zerolog.New(os.Stderr).With().Timestamp().Logger()
+	} else {
+		logger = zerolog.New(zerolog.ConsoleWriter{
+			Out:        os.Stderr,
+			TimeFormat: time.TimeOnly,
+		}).With().Timestamp().Logger()
+	}
 
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 
@@ -53,7 +60,14 @@ func main() {
 	case *accessMedia:
 		mode = lsdalm.MODE_ACCESS
 	}
-	sg, err := lsdalm.NewStreamChecker(*name, *url, *dir, *pollTime, mode, logger, *workers)
+	var checkerLog lsdalm.CheckerLogger
+	channelLogger := logger.With().Str("channel", *name).Logger()
+	if *jsonLog {
+		checkerLog = lsdalm.NewJsonCheckerLogger(channelLogger)
+	} else {
+		checkerLog = lsdalm.NewTextCheckerLogger(channelLogger)
+	}
+	sg, err := lsdalm.NewStreamChecker(*name, *url, *dir, *pollTime, mode, logger, *workers, *nodate, checkerLog)
 	if err != nil {
 		logger.Fatal().Err(err).Send()
 		return
