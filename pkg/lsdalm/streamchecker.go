@@ -70,11 +70,11 @@ type StreamChecker struct {
 	lastDate        string                    // date of last http fetch (from header)
 	mpdDiffer       *MpdDiffer                // compare new to last mpd and trigger events
 	lastNewMpd      time.Time                 // time of last update of mpd
-	checkerLog      checkerLogger             // logging strategy (text or json)
+	checkerLog      CheckerLogger             // logging strategy (text or json)
 }
 
-// checkerLogger abstracts text vs JSON logging
-type checkerLogger interface {
+// CheckerLogger abstracts text vs JSON logging
+type CheckerLogger interface {
 	LogNewPeriod(periodId string, starts time.Time)
 	LogNewEvent(scheme string, eventId uint64, at time.Time, duration time.Duration)
 	LogPeriodGap(periodId string, gapFromPrevious, gapToNext time.Duration)
@@ -83,7 +83,7 @@ type checkerLogger interface {
 	LogManifest(m *ManifestLog)
 }
 
-func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, fetchMode FetchMode, logger zerolog.Logger, workers int, nodate, jsonMode bool) (*StreamChecker, error) {
+func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, fetchMode FetchMode, logger zerolog.Logger, workers int, nodate bool, checkerLog CheckerLogger) (*StreamChecker, error) {
 
 	st := &StreamChecker{
 		name:       name,
@@ -95,14 +95,10 @@ func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, f
 		client: &http.Client{
 			Transport: &http.Transport{},
 		},
-		haveMap:   make(map[string]bool),
-		userAgent: DefaultUserAgent,
-		mpdDiffer: NewMpdDiffer(logger),
-	}
-	if jsonMode {
-		st.checkerLog = &jsonCheckerLogger{logger: st.logger}
-	} else {
-		st.checkerLog = &textCheckerLogger{logger: st.logger}
+		haveMap:    make(map[string]bool),
+		userAgent:  DefaultUserAgent,
+		mpdDiffer:  NewMpdDiffer(logger),
+		checkerLog: checkerLog,
 	}
 	var err error
 	st.sourceUrl, err = url.Parse(source)

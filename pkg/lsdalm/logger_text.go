@@ -12,6 +12,10 @@ type textCheckerLogger struct {
 	logger zerolog.Logger
 }
 
+func NewTextCheckerLogger(logger zerolog.Logger) CheckerLogger {
+	return &textCheckerLogger{logger: logger}
+}
+
 func (o *textCheckerLogger) LogNewPeriod(periodId string, starts time.Time) {
 	o.logger.Info().Msgf("New Period %s starts %s", periodId, starts)
 }

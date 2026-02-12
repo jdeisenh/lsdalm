@@ -60,7 +60,14 @@ func main() {
 	case *accessMedia:
 		mode = lsdalm.MODE_ACCESS
 	}
-	sg, err := lsdalm.NewStreamChecker(*name, *url, *dir, *pollTime, mode, logger, *workers, *nodate, *jsonLog)
+	var checkerLog lsdalm.CheckerLogger
+	channelLogger := logger.With().Str("channel", *name).Logger()
+	if *jsonLog {
+		checkerLog = lsdalm.NewJsonCheckerLogger(channelLogger)
+	} else {
+		checkerLog = lsdalm.NewTextCheckerLogger(channelLogger)
+	}
+	sg, err := lsdalm.NewStreamChecker(*name, *url, *dir, *pollTime, mode, logger, *workers, *nodate, checkerLog)
 	if err != nil {
 		logger.Fatal().Err(err).Send()
 		return

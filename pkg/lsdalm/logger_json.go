@@ -11,6 +11,10 @@ type jsonCheckerLogger struct {
 	logger zerolog.Logger
 }
 
+func NewJsonCheckerLogger(logger zerolog.Logger) CheckerLogger {
+	return &jsonCheckerLogger{logger: logger}
+}
+
 func (o *jsonCheckerLogger) LogNewPeriod(periodId string, starts time.Time) {
 	o.logger.Info().Str("periodId", periodId).Time("starts", starts).Msg("new period")
 }
