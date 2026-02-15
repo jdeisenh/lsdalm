@@ -45,3 +45,7 @@ func (o *jsonCheckerLogger) LogNoUpdate(since time.Duration) {
 func (o *jsonCheckerLogger) LogManifest(m *ManifestLog) {
 	o.logger.Info().Interface("manifest", m).Msg("manifest")
 }
+
+func (o *jsonCheckerLogger) LogPollFailure(err error, consecutive int) {
+	o.logger.Error().Err(err).Int("consecutive", consecutive).Msg("poll failure")
+}

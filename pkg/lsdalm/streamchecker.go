@@ -81,6 +81,7 @@ type CheckerLogger interface {
 	LogTrackAlignmentOffset(offsetDiff float64, adaptationSet, periodId string)
 	LogNoUpdate(since time.Duration)
 	LogManifest(m *ManifestLog)
+	LogPollFailure(err error, consecutive int)
 }
 
 func NewStreamChecker(name, source, dumpbase string, updateFreq time.Duration, fetchMode FetchMode, logger zerolog.Logger, workers int, nodate bool, checkerLog CheckerLogger) (*StreamChecker, error) {
@@ -703,8 +704,9 @@ ASloop:
 	return nil
 }
 
-// Do fetches and analyzes until 'done' is signaled
-func (sc *StreamChecker) Do() error {
+// Do fetches and analyzes until 'done' is signaled.
+// If maxRetries > 0, it returns an error after that many consecutive poll failures.
+func (sc *StreamChecker) Do(maxRetries int) error {
 
 	// Do once immediately, return on error
 	err := sc.fetchAndStoreManifest()
@@ -712,6 +714,7 @@ func (sc *StreamChecker) Do() error {
 		sc.logger.Error().Err(err).Msg("Initial fetch")
 		return err
 	}
+	consecutiveErrors := 0
 	sc.ticker = time.NewTicker(sc.updateFreq)
 	defer sc.ticker.Stop()
 forloop:
@@ -721,7 +724,13 @@ forloop:
 			break forloop
 		case <-sc.ticker.C:
 			if err := sc.fetchAndStoreManifest(); err != nil {
-				sc.logger.Error().Err(err).Msg("Manifest fetch")
+				consecutiveErrors++
+				sc.checkerLog.LogPollFailure(err, consecutiveErrors)
+				if maxRetries > 0 && consecutiveErrors >= maxRetries {
+					return fmt.Errorf("aborting after %d consecutive poll failures: %w", consecutiveErrors, err)
+				}
+			} else {
+				consecutiveErrors = 0
 			}
 		}
 
