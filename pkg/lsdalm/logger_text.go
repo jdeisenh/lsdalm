@@ -40,6 +40,10 @@ func (o *textCheckerLogger) LogNoUpdate(since time.Duration) {
 	o.logger.Warn().Msgf("No update since %s", since)
 }
 
+func (o *textCheckerLogger) LogPollFailure(err error, consecutive int) {
+	o.logger.Error().Msgf("Poll failure (%d consecutive): %v", consecutive, err)
+}
+
 // LogManifest renders the ManifestLog as one text line per track
 func (o *textCheckerLogger) LogManifest(m *ManifestLog) {
 	for _, track := range m.Tracks {

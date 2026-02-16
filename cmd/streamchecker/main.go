@@ -26,6 +26,7 @@ func main() {
 
 	pollTime := flag.Duration("pollInterval", 5*time.Second, "Poll Interval in milliseconds")
 	timeLimit := flag.Duration("timelimit", 0, "Time limit")
+	maxRetries := flag.Int("maxRetries", 0, "Exit after N consecutive poll failures (0 = never)")
 
 	flag.Parse()
 
@@ -94,9 +95,11 @@ func main() {
 	}
 
 	if *timeLimit == time.Duration(0) {
-		sg.Do()
+		if err := sg.Do(*maxRetries); err != nil {
+			logger.Fatal().Err(err).Send()
+		}
 	} else {
-		go sg.Do()
+		go sg.Do(*maxRetries)
 		time.Sleep(*timeLimit)
 		sg.Done()
 	}
